@@ -4,20 +4,102 @@ Compile authentic Slovenia Golovec LiDAR DEM, Orthophoto Colormaps, Lightmaps,
 terraindata.raw, HeightmapPrimary.raw, StaticObjects.con, and GameplayObjects.con
 for Battlefield 2 (Refractor 2 Engine).
 """
+import glob
 import io
 import os
 import re
 import shutil
 import struct
 import time
+import xml.etree.ElementTree as ET
 import zipfile
 import numpy as np
-from PIL import Image
+import pyproj
+from PIL import Image, ImageDraw
+from scipy.ndimage import distance_transform_edt, gaussian_filter1d
 
 WORKSPACE_DIR = "/home/ator/BF2"
 LEVEL_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/slovenia_golovec"
 RAW_DIR = os.path.join(LEVEL_DIR, "_raw_files")
 DV_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/Dragon_Valley"
+SEA_WATER_LEVEL = 269.50
+
+
+def extract_ljubljanica_river_mask() -> np.ndarray:
+    """
+    Reconstructs the exact 2049x2049 boolean mask of the Ljubljanica river channel
+    (including islands as dry land and the Vevce mill canal) from the cached OSM
+    multipolygon relation (natural=water, water=river) and D96TM projection.
+    """
+    origin_e = 468498.0
+    origin_n = 99466.0
+    to_d96 = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3794", always_xy=True)
+
+    nodes = {}
+    ways = {}
+    relations = []
+    for path in sorted(glob.glob(os.path.join(WORKSPACE_DIR, ".osm_cache", "osm_*.xml"))):
+        tree = ET.parse(path)
+        root = tree.getroot()
+        for nd in root.findall("node"):
+            nid = nd.attrib["id"]
+            lat = float(nd.attrib["lat"])
+            lon = float(nd.attrib["lon"])
+            e, n = to_d96.transform(lon, lat)
+            gx = (e - origin_e + 2048.0) / 4096.0 * 2048.0
+            gz = (n - origin_n + 2048.0) / 4096.0 * 2048.0
+            nodes[nid] = (gx, gz)
+        for way in root.findall("way"):
+            wid = way.attrib["id"]
+            tags = {t.attrib["k"]: t.attrib["v"] for t in way.findall("tag")}
+            nds = [nd.attrib["ref"] for nd in way.findall("nd") if nd.attrib["ref"] in nodes]
+            ways[wid] = (tags, nds, [nodes[r] for r in nds])
+        for rel in root.findall("relation"):
+            tags = {t.attrib["k"]: t.attrib["v"] for t in rel.findall("tag")}
+            members = [
+                (m.attrib["type"], m.attrib["ref"], m.attrib.get("role", ""))
+                for m in rel.findall("member")
+            ]
+            relations.append((tags, members))
+
+    rel_members = next(m for t, m in relations if t.get("water") == "river")
+    outer_ways = [
+        (ref, ways[ref][1], ways[ref][2])
+        for t, ref, role in rel_members
+        if ref in ways and role == "outer"
+    ]
+    inner_ways = [
+        (ref, ways[ref][1], ways[ref][2])
+        for t, ref, role in rel_members
+        if ref in ways and role == "inner"
+    ]
+
+    segs = [list(pts) for _, _, pts in outer_ways]
+    chain = segs.pop(0)
+    while segs:
+        best_i, best_rev, best_d = 0, False, 1e18
+        for i, s in enumerate(segs):
+            d0 = (s[0][0] - chain[-1][0]) ** 2 + (s[0][1] - chain[-1][1]) ** 2
+            d1 = (s[-1][0] - chain[-1][0]) ** 2 + (s[-1][1] - chain[-1][1]) ** 2
+            if d0 < best_d:
+                best_i, best_rev, best_d = i, False, d0
+            if d1 < best_d:
+                best_i, best_rev, best_d = i, True, d1
+        s = segs.pop(best_i)
+        if best_rev:
+            s = list(reversed(s))
+        chain.extend(s[1:] if best_d < 1.0 else s)
+
+    img = Image.new("L", (2049, 2049), 0)
+    draw = ImageDraw.Draw(img)
+    draw.polygon(chain, fill=1)
+    for _, _, ipts in inner_ways:
+        if len(ipts) >= 3:
+            draw.polygon(ipts, fill=0)
+    if "538835423" in ways:
+        draw.line(ways["538835423"][2], fill=1, width=6)
+
+    return np.array(img, dtype=bool)
 
 
 def encode_dxt1_blocks(img_rgb: np.ndarray) -> bytes:
@@ -107,15 +189,54 @@ def compute_lod_delta(H: np.ndarray, step: int) -> np.ndarray:
 
 def main():
     t_start = time.time()
-    print("=== 1. Loading Slovenia Golovec LiDAR Heightmap.raw (2049x2049) ===")
-    hm_2049 = np.fromfile(os.path.join(WORKSPACE_DIR, "Heightmap.raw"), dtype=np.uint16).reshape(2049, 2049)
+    print("=== 1. Loading Slovenia Golovec LiDAR Heightmap.raw (2049x2049) & Aligning Ljubljanica River ===")
+    hm_orig = (
+        np.fromfile(os.path.join(WORKSPACE_DIR, "Heightmap.raw"), dtype=np.uint16).reshape(2049, 2049)
+        * 0.01
+    )
+    river_mask = extract_ljubljanica_river_mask()
+
+    # In the raw LiDAR DEM, the Ljubljanica water surface slopes downstream from 272.76m (West,
+    # above the Fuzine weir) down to 266.79m (East, Zalog), while BF2's SeaWaterLevel is a flat
+    # horizontal plane at 269.50m. Align the local river valley water datum to SEA_WATER_LEVEL
+    # and carve a smooth 2.75m bathymetric channel strictly inside river_mask so water fills the
+    # entire Ljubljanica river from West to East with zero flooding of surrounding fields.
+    h_river_col = np.zeros(2049, dtype=np.float64)
+    for x in range(2049):
+        rows = np.where(river_mask[:, x])[0]
+        if len(rows):
+            h_river_col[x] = np.percentile(hm_orig[rows, x], 30)
+        else:
+            h_river_col[x] = h_river_col[x - 1] if x > 0 else 272.76
+    h_river_smooth = gaussian_filter1d(h_river_col, sigma=16)
+
+    dist_outside = distance_transform_edt(~river_mask)
+    dist_inside = distance_transform_edt(river_mask)
+
+    delta_col = (SEA_WATER_LEVEL - h_river_smooth)[None, :]
+    w_elev = np.clip((305.0 - hm_orig) / 20.0, 0.0, 1.0)
+    hm_adj = hm_orig + delta_col * w_elev
+
+    # Ensure all dry land (~river_mask) stays cleanly above SEA_WATER_LEVEL
+    bank_min = SEA_WATER_LEVEL + np.clip(dist_outside * 0.25, 0.20, 0.85)
+    hm_adj[~river_mask] = np.maximum(hm_adj[~river_mask], bank_min[~river_mask])
+
+    # Carve bathymetric riverbed strictly inside the Ljubljanica river channel
+    depth = np.clip(dist_inside * 0.45, 0.25, 2.75)
+    hm_adj[river_mask] = SEA_WATER_LEVEL - depth[river_mask]
+
+    hm_2049 = np.clip(np.round(hm_adj * 100.0), 0, 65535).astype(np.uint16)
+
     # Decimate by stride 2 to 1025x1025 for BF2 primary heightmap
     # Note: Heightmap.raw is already Row 0 = South (-Z), Row 2048 = North (+Z), Col 0 = West (-X), Col 2048 = East (+X)
     hp_u16 = hm_2049[::2, ::2].copy()
     assert hp_u16.shape == (1025, 1025)
     hp_m = hp_u16.astype(np.float64) * 0.01
+    river_1025 = river_mask[::2, ::2]
 
     print(f"Primary Heightmap range: {hp_m.min():.2f}m .. {hp_m.max():.2f}m")
+    print(f"Ljubljanica river submerged vertices: {(hp_m <= SEA_WATER_LEVEL).sum()} (100% inside river channel)")
+    print(f"Dry land vertices <= {SEA_WATER_LEVEL}m: {(hp_m[~river_1025] <= SEA_WATER_LEVEL).sum()}")
     print(f"Center (0,0) elevation: {hp_m[512, 512]:.2f}m")
     print(f"South hills mean: {hp_m[:256, :].mean():.2f}m | North river valley mean: {hp_m[768:, :].mean():.2f}m")
 
@@ -326,18 +447,37 @@ def main():
     os.makedirs(os.path.join(RAW_DIR, "Detailmaps"), exist_ok=True)
     os.makedirs(os.path.join(RAW_DIR, "LowDetailmaps"), exist_ok=True)
 
-    # Upsample surface normals to 4096x4096 via bilinear resize for Lightmaps
-    # Sun direction from South-West-Up: L = normalize((-0.45, 0.75, -0.48))
+    # Project Reality Lightmap Standard (page14.rst & page15.rst):
+    # 1. Clamp underwater heights to SEA_WATER_LEVEL before computing G (Sun) and B (Sky) normals
+    # 2. Encode Sea Water Depth/Transparency (0 at shoreline -> 255 at >=3.0m depth) in Red (R) channel
+    hp_flat = np.maximum(hp_m, SEA_WATER_LEVEL)
+    w_dh_dx = np.zeros_like(hp_flat)
+    w_dh_dz = np.zeros_like(hp_flat)
+    w_dh_dx[:, 1:-1] = (hp_flat[:, 2:] - hp_flat[:, :-2]) / 4.0
+    w_dh_dx[:, 0] = (hp_flat[:, 1] - hp_flat[:, 0]) / 2.0
+    w_dh_dx[:, -1] = (hp_flat[:, -1] - hp_flat[:, -2]) / 2.0
+    w_dh_dz[1:-1, :] = (hp_flat[2:, :] - hp_flat[:-2, :]) / 4.0
+    w_dh_dz[0, :] = (hp_flat[1, :] - hp_flat[0, :]) / 2.0
+    w_dh_dz[-1, :] = (hp_flat[-1, :] - hp_flat[-2, :]) / 2.0
+
+    wnx = -w_dh_dx
+    wny = np.ones_like(hp_flat)
+    wnz = -w_dh_dz
+    wnlen = np.sqrt(wnx * wnx + wny * wny + wnz * wnz)
+    wnx /= wnlen
+    wny /= wnlen
+    wnz /= wnlen
+
     lx, ly, lz = -0.45, 0.75, -0.48
     llen = np.sqrt(lx * lx + ly * ly + lz * lz)
     lx /= llen
     ly /= llen
     lz /= llen
-    ndotl = np.clip(nx * lx + ny * ly + nz * lz, 0.0, 1.0)
-    # Green = Direct Sun (70..245), Blue = Sky Ambient (195..235), Red = 0
+    ndotl = np.clip(wnx * lx + wny * ly + wnz * lz, 0.0, 1.0)
     lm_g_1025 = np.clip(np.round(55.0 + 190.0 * ndotl), 0, 255).astype(np.uint8)
-    lm_b_1025 = np.clip(np.round(185.0 + 45.0 * ny), 0, 255).astype(np.uint8)
-    lm_r_1025 = np.zeros_like(lm_g_1025)
+    lm_b_1025 = np.clip(np.round(185.0 + 45.0 * wny), 0, 255).astype(np.uint8)
+    water_depth_1025 = np.clip(SEA_WATER_LEVEL - hp_m, 0.0, 3.0)
+    lm_r_1025 = np.clip(np.round((water_depth_1025 / 3.0) * 255.0), 0, 255).astype(np.uint8)
     lm_1025 = np.stack([lm_r_1025, lm_g_1025, lm_b_1025], axis=-1)
     lm_4096 = np.array(Image.fromarray(lm_1025).resize((4096, 4096), Image.Resampling.BILINEAR))
 
@@ -421,6 +561,16 @@ def main():
         r"Object\.layer\s+(\d+)"
     )
 
+    # Collect CP & spawn coordinates from GameplayObjects.con to enforce 25m clearance
+    cp_positions = []
+    gpo_main = os.path.join(RAW_DIR, "GameplayObjects.con")
+    if os.path.exists(gpo_main):
+        with open(gpo_main, "r") as f:
+            for m_pos in re.finditer(
+                r"Object\.absolutePosition\s+([-\d.]+)/([-\d.]+)/([-\d.]+)", f.read()
+            ):
+                cp_positions.append((float(m_pos.group(1)), float(m_pos.group(3))))
+
     so_lines = [
         "rem *** Generated for Slovenia Golovec LiDAR Terrain ***",
         "if v_arg1 == BF2Editor",
@@ -436,9 +586,11 @@ def main():
         zn = 0.5 * float(zs)
         if abs(xn) > 1000.0 or abs(zn) > 1000.0:
             continue
+        if any((xn - cx) ** 2 + (zn - cz) ** 2 < 25.0**2 for cx, cz in cp_positions):
+            continue
         yn = sample_height(xn, zn)
         # Skip if in the river channel
-        if yn <= 270.0:
+        if yn <= SEA_WATER_LEVEL + 0.35:
             continue
         so_lines.append(f"Object.create {t_name}")
         so_lines.append(f"Object.absolutePosition {xn:.3f}/{yn:.3f}/{zn:.3f}")
@@ -450,6 +602,26 @@ def main():
     with open(os.path.join(RAW_DIR, "StaticObjects.con"), "w") as f:
         f.write("\n".join(so_lines))
     print(f"Wrote StaticObjects.con with {b_count} grounded OSM buildings")
+
+    # Re-ground OvergrowthCollision.con
+    og_col_path = os.path.join(RAW_DIR, "Overgrowth", "OvergrowthCollision.con")
+    if os.path.exists(og_col_path):
+        with open(og_col_path, "r") as f:
+            og_lines = f.readlines()
+        og_out = []
+        for line in og_lines:
+            m_pos = re.match(
+                r"^(\s*Object\.absolutePosition\s+)([-\d.]+)/([-\d.]+)/([-\d.]+)(.*)$", line
+            )
+            if m_pos:
+                prefix, xs, ys, zs, suffix = m_pos.groups()
+                x, z = float(xs), float(zs)
+                og_out.append(f"{prefix}{x:.2f}/{sample_height(x, z):.2f}/{z:.2f}{suffix}\n")
+            else:
+                og_out.append(line)
+        with open(og_col_path, "w") as f:
+            f.writelines(og_out)
+        print("Re-grounded Overgrowth/OvergrowthCollision.con")
 
     print("=== 6. Re-Grounding Control Points & Spawns in GameplayObjects.con & Init.con ===")
     # Update every Object.absolutePosition X/Y/Z in GameplayObjects.con to match hp_m(X, Z)
@@ -501,6 +673,21 @@ def main():
     )
     with open(os.path.join(RAW_DIR, "Init.con"), "w") as f:
         f.write(init_txt)
+
+    print("=== 7. Repacking client.zip & server.zip and Syncing to Workspace ===")
+    for archive_name in ["client.zip", "server.zip"]:
+        zip_path = os.path.join(LEVEL_DIR, archive_name)
+        with zipfile.ZipFile(zip_path, "r") as zf_in:
+            names = zf_in.namelist()
+        tmp_zip = zip_path + ".tmp"
+        with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf_out:
+            for name in names:
+                raw_file = os.path.join(RAW_DIR, name)
+                if os.path.isfile(raw_file):
+                    zf_out.write(raw_file, name)
+        os.replace(tmp_zip, zip_path)
+        shutil.copy2(zip_path, os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec", archive_name))
+        print(f"  Packed & synced {archive_name} ({os.path.getsize(zip_path):,} bytes)")
 
     print(f"=== Compilation finished in {time.time() - t_start:.1f}s ===")
 
