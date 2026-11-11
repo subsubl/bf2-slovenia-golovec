@@ -16,6 +16,7 @@ import struct
 import time
 import xml.etree.ElementTree as ET
 import zipfile
+from collections import defaultdict
 import numpy as np
 import pyproj
 from PIL import Image, ImageDraw
@@ -26,6 +27,48 @@ LEVEL_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/slovenia_golovec
 RAW_DIR = os.path.join(LEVEL_DIR, "_raw_files")
 DV_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/Dragon_Valley"
 SEA_WATER_LEVEL = 269.50
+
+# Exact DICE 3ds Max bounding-box center Y-pivot offsets above ground level (in meters)
+# verified across all vanilla Battlefield 2 levels:
+STATIC_PIVOT_Y = {
+    "office_building": 2.25,
+    "lrgfactorybuilding": 23.03,
+    "midfactorybuilding": 10.43,
+    "lrgstrgbuilding_01": 13.62,
+    "ch_house_modern_01": 2.92,
+    "ch_house_modern_01_v2": 3.25,
+    "ch_house_modern_02": 5.89,
+    "ch_house_modern_02_v2": 5.46,
+    "ch_house_modern_03": 5.09,
+    "ch_house_01": 4.21,
+    "ch_house_02": 4.28,
+    "ch_house_02_v2": 4.32,
+    "ch_house_05": 2.83,
+    "ch_house_05_v2": 2.85,
+    "ch_house_05_v3": 2.84,
+    "ch_farm_01": 2.43,
+    "ch_farm_01_v2": 2.42,
+    "ch_farm_01_v3": 1.25,
+    "ch_farm_02": 0.14,
+    "ch_farm_03": 3.36,
+    "ch_farm_03_v2": 3.93,
+    "ch_farm_03_v3": 3.30,
+    "ch_farm_03_v4": 0.54,
+    "storage_shed": 3.63,
+    "gatehouse": 1.69,
+    "toolshed": 2.06,
+    "ch_boathouse_01": 4.45,
+    "chpowerstation": 10.01,
+    "chimney_02": 50.87,
+    "silo_02": 20.52,
+    "mi_antenna": 16.72,
+    "antennamast": 17.53,
+    "cablepole": 4.60,
+    "lamp_post": 2.76,
+    "lamppost_highway_01": 2.80,
+    "stonefence_10m": 0.50,
+    "wirefence_24m": 1.25,
+}
 
 # Five authentic Ljubljanica river bridge crossings from OSM & LiDAR:
 # (name, bridge_type, cx, cz, yaw_deg, y_road, half_span_m)
@@ -316,7 +359,12 @@ def encode_dxt1_blocks(img_rgb: np.ndarray) -> bytes:
     return out.tobytes()
 
 
-def make_dxt1_dds(img_rgb: np.ndarray, flags: int = 0x000A1007, mipmaps: bool = True) -> bytes:
+def make_dxt1_dds(
+    img_rgb: np.ndarray,
+    flags: int = 0x000A1007,
+    mipmaps: bool = True,
+    header_mips_if_no_chain: int = 0,
+) -> bytes:
     h, w, _ = img_rgb.shape
     mips = []
     cur = img_rgb
@@ -328,7 +376,7 @@ def make_dxt1_dds(img_rgb: np.ndarray, flags: int = 0x000A1007, mipmaps: bool = 
         cur = (
             (cur[0::2, 0::2] + cur[1::2, 0::2] + cur[0::2, 1::2] + cur[1::2, 1::2]) >> 2
         ).astype(np.uint8)
-    num_mips = len(mips) if mipmaps else 0
+    num_mips = len(mips) if mipmaps else header_mips_if_no_chain
     caps = 0x401008 if mipmaps else 0x1000
     pitch = max(1, w // 4) * max(1, h // 4) * 8
     hdr = b"DDS " + struct.pack(
@@ -347,6 +395,44 @@ def make_dxt1_dds(img_rgb: np.ndarray, flags: int = 0x000A1007, mipmaps: bool = 
         0,
     )
     return hdr + b"".join(mips)
+
+
+def make_dxt5_dds(img_rgba: np.ndarray, flags: int = 0x00081007) -> bytes:
+    """Encode a 1024x1024 RGBA image into an uncompressed-mipmap DXT5 DDS (for groundhemi.dds)."""
+    h, w, _ = img_rgba.shape
+    rgb_bytes = encode_dxt1_blocks(img_rgba[:, :, :3])
+    rgb_u64 = np.frombuffer(rgb_bytes, dtype=np.uint64)
+
+    a_blocks = (
+        img_rgba[:, :, 3]
+        .reshape(h // 4, 4, w // 4, 4)
+        .transpose(0, 2, 1, 3)
+        .reshape(-1, 16)
+    )
+    a_mean = a_blocks.mean(axis=1).round().astype(np.uint64)
+    alpha_u64 = a_mean | (a_mean << 8)
+
+    out_blocks = np.empty((len(rgb_u64), 2), dtype="<u8")
+    out_blocks[:, 0] = alpha_u64
+    out_blocks[:, 1] = rgb_u64
+
+    pitch = max(1, w // 4) * max(1, h // 4) * 16
+    hdr = b"DDS " + struct.pack(
+        "<7I44xII4s20xII12x",
+        124,
+        flags,
+        h,
+        w,
+        pitch,
+        0,
+        0,
+        32,
+        4,
+        b"DXT5",
+        0x1000,
+        0,
+    )
+    return hdr + out_blocks.tobytes()
 
 
 def compute_lod_delta(H: np.ndarray, step: int) -> np.ndarray:
@@ -372,6 +458,11 @@ def main():
     print("=== 1. Extracting OSM Roads, RABA-KGZ Landuse, Infrastructure & Ljubljanica River ===")
     river_mask, road_mask_2048, meadow_mask_2048, infra_props = extract_osm_and_raba_layers()
     print(f"Extracted Ljubljanica mask ({river_mask.sum()} px), road network, RABA meadows, and {len(infra_props)} curated infrastructure props")
+
+    ndmp_u8 = np.fromfile(
+        os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec/Overgrowth/Overgrowth.raw"),
+        dtype=np.uint8,
+    ).reshape(2049, 2049)
 
     hm_orig = (
         np.fromfile(os.path.join(WORKSPACE_DIR, "Heightmap.raw"), dtype=np.uint16).reshape(2049, 2049)
@@ -426,6 +517,92 @@ def main():
             hm_adj[pad_mask] = (
                 (1.0 - w_pad[pad_mask]) * hm_adj[pad_mask] + w_pad[pad_mask] * target_h
             )
+
+    # Pre-classify OSM buildings with GURS nDMP heights using DICE-lightmapped templates,
+    # and softly level a 5m foundation pad on dry land under each building so hillside houses
+    # never float on their downhill corner or bury their ground-floor doorways.
+    def classify_building_with_ndmp(orig_t: str, x_4k: float, z_4k: float, idx: int) -> str:
+        c = int(np.clip(round((x_4k + 2048.0) / 2.0), 0, 2048))
+        r = int(np.clip(round((z_4k + 2048.0) / 2.0), 0, 2048))
+        v = int(ndmp_u8[max(0, r - 2) : min(2049, r + 3), max(0, c - 2) : min(2049, c + 3)].max())
+        h_roof = 0.0 if v == 0 else (1.5 + (v / 255.0) * 18.5)
+
+        if orig_t == "warehouse_01":
+            return "lrgfactorybuilding" if h_roof >= 12.5 else "midfactorybuilding"
+        if h_roof >= 15.5 or orig_t in ("citybuilding_01", "eu_office_01", "me_apartment_01"):
+            return "office_building" if (idx % 2 == 0) else "ch_house_modern_01_v2"
+        if h_roof >= 11.2 or orig_t in ("eu_building01", "eu_building02"):
+            return "ch_house_modern_02" if (idx % 2 == 0) else "ch_house_modern_02_v2"
+        if h_roof < 5.2 or orig_t in ("shed_01", "wooden_shed", "barn_01", "barn_02", "farmhouse"):
+            shed_pool = [
+                "storage_shed",
+                "gatehouse",
+                "ch_farm_02",
+                "ch_farm_03",
+                "ch_farm_03_v2",
+                "ch_farm_03_v3",
+                "ch_farm_03_v4",
+            ]
+            return shed_pool[idx % len(shed_pool)]
+        house_pool = [
+            "ch_house_05",
+            "ch_house_05_v2",
+            "ch_house_05_v3",
+            "ch_farm_01",
+            "ch_farm_01_v2",
+            "ch_farm_01_v3",
+        ]
+        return house_pool[idx % len(house_pool)]
+
+    with open(os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec/StaticObjects.con"), "r") as f:
+        src_so = f.read()
+
+    pattern = re.compile(
+        r"Object\.create\s+(\S+)\s*\n"
+        r"Object\.absolutePosition\s+([-\d.]+)/([-\d.]+)/([-\d.]+)\s*\n"
+        r"Object\.rotation\s+([-\d.]+/[-\d.]+/[-\d.]+)\s*\n"
+        r"Object\.layer\s+(\d+)"
+    )
+
+    cp_positions = [(cx, cz) for _, _, _, _, cx, cz in CONTROL_POINTS]
+    placed_buildings = []
+
+    for idx, m in enumerate(pattern.finditer(src_so)):
+        orig_t, xs, ys, zs, rot, layer = m.groups()
+        x_4k, z_4k = float(xs), float(zs)
+        xn = 0.5 * x_4k
+        zn = 0.5 * z_4k
+        if abs(xn) > 1000.0 or abs(zn) > 1000.0:
+            continue
+        if any((xn - cx) ** 2 + (zn - cz) ** 2 < 28.0**2 for cx, cz in cp_positions):
+            continue
+        if any(
+            (xn - bcx) ** 2 + (zn - bcz) ** 2 < (b_half + 16.0) ** 2
+            for _, _, bcx, bcz, _, _, b_half in LJUBLJANICA_BRIDGES
+        ):
+            continue
+        ic = int(np.clip(round(xn + 1024.0), 0, 2048))
+        ir = int(np.clip(round(zn + 1024.0), 0, 2048))
+        if river_mask[ir, ic] or dist_outside[ir, ic] < 4.0:
+            continue
+        if hm_adj[ir, ic] <= SEA_WATER_LEVEL + 0.45:
+            continue
+        t_name = classify_building_with_ndmp(orig_t, x_4k, z_4k, idx)
+        min_sep = 16.0 if t_name in ("lrgfactorybuilding", "midfactorybuilding", "office_building", "storage_shed") else 9.2
+        if any((xn - bx) ** 2 + (zn - bz) ** 2 < min_sep * min_sep for _, bx, bz, _, _ in placed_buildings):
+            continue
+        placed_buildings.append((t_name, xn, zn, rot, layer))
+
+        # Grade a gentle 5m dry-land foundation lot around (ir, ic) so hillside doorways sit flush
+        r0, r1 = max(0, ir - 6), min(2049, ir + 7)
+        c0, c1 = max(0, ic - 6), min(2049, ic + 7)
+        sub_mask = ~river_mask[r0:r1, c0:c1]
+        if sub_mask.any():
+            h_lot = max(float(hm_adj[ir, ic]), SEA_WATER_LEVEL + 0.45)
+            dy_g, dx_g = np.mgrid[r0:r1, c0:c1]
+            dist_lot = np.sqrt((dy_g - ir) ** 2 + (dx_g - ic) ** 2)
+            w_lot = np.clip(1.0 - dist_lot / 6.0, 0.0, 1.0) * 0.65 * sub_mask
+            hm_adj[r0:r1, c0:c1] = (1.0 - w_lot) * hm_adj[r0:r1, c0:c1] + w_lot * h_lot
 
     hm_2049 = np.clip(np.round(hm_adj * 100.0), 0, 65535).astype(np.uint16)
     hp_u16 = hm_2049[::2, ::2].copy()
@@ -532,6 +709,7 @@ def main():
     print("=== 3. Compiling terraindata.raw from Dragon_Valley template + Slovenia LiDAR ===")
     with zipfile.ZipFile(os.path.join(DV_DIR, "client.zip"), "r") as zf:
         dv_td = zf.read("terraindata.raw")
+        dv_tai_txt = zf.read("Lightmaps/Objects/LightmapAtlas.tai").decode("latin1")
     td_bytes = bytearray(
         dv_td.replace(b"levels/dragon_valley", b"levels/slovenia_golovec").replace(
             b"Levels/Dragon_Valley", b"Levels/slovenia_golovec"
@@ -629,11 +807,11 @@ def main():
         f.write(td_bytes)
     print(f"Wrote terraindata.raw ({len(td_bytes)} bytes)")
 
-    print("=== 4. Generating GIS Detailmaps, LowDetailmaps, Colormaps & PR Lightmaps ===")
+    print("=== 4. Generating GIS Detailmaps, LowDetailmaps, Colormaps, PR Lightmaps, groundhemi & Minimap ===")
     cm_full = np.array(
         Image.open(os.path.join(WORKSPACE_DIR, "ColorMap_preview.png")).convert("RGB")
     )
-    cm_south_up = np.flipud(cm_full)
+    cm_south_up = np.flipud(cm_full).copy()
 
     os.makedirs(os.path.join(RAW_DIR, "Colormaps"), exist_ok=True)
     os.makedirs(os.path.join(RAW_DIR, "Lightmaps"), exist_ok=True)
@@ -669,7 +847,7 @@ def main():
 
     lowdetail_2048 = np.stack([255 - b_ch, np.zeros_like(b_ch), b_ch], axis=-1)
 
-    # Project Reality Lightmap Standard (page14.rst & page15.rst)
+    # Project Reality Lightmap Standard (page14.rst & page15.rst) + Baked Building/Bridge Ground Contact Shadows
     hp_flat = np.maximum(hp_m, SEA_WATER_LEVEL)
     w_dh_dx = np.zeros_like(hp_flat)
     w_dh_dz = np.zeros_like(hp_flat)
@@ -695,8 +873,26 @@ def main():
     ly /= llen
     lz /= llen
     ndotl = np.clip(wnx * lx + wny * ly + wnz * lz, 0.0, 1.0)
-    lm_g_1025 = np.clip(np.round(55.0 + 190.0 * ndotl), 0, 255).astype(np.uint8)
-    lm_b_1025 = np.clip(np.round(185.0 + 45.0 * wny), 0, 255).astype(np.uint8)
+
+    # Bake soft ambient-occlusion contact shadows on the ground under buildings & bridges
+    contact_atten = np.ones((1025, 1025), dtype=np.float32)
+    for t_name, bx, bz, _, _ in placed_buildings:
+        bc = int(np.clip(round((bx + 1024.0) / 2.0), 0, 1024))
+        br = int(np.clip(round((bz + 1024.0) / 2.0), 0, 1024))
+        rad_px = 5 if t_name in ("lrgfactorybuilding", "midfactorybuilding", "office_building") else 3
+        r0, r1 = max(0, br - rad_px), min(1025, br + rad_px + 1)
+        c0, c1 = max(0, bc - rad_px), min(1025, bc + rad_px + 1)
+        contact_atten[r0:r1, c0:c1] = np.minimum(contact_atten[r0:r1, c0:c1], 0.82)
+
+    for b_name, b_type, bcx, bcz, byaw, by_road, b_half in LJUBLJANICA_BRIDGES:
+        bc = int(np.clip(round((bcx + 1024.0) / 2.0), 0, 1024))
+        br = int(np.clip(round((bcz + 1024.0) / 2.0), 0, 1024))
+        r0, r1 = max(0, br - 12), min(1025, br + 13)
+        c0, c1 = max(0, bc - 12), min(1025, bc + 13)
+        contact_atten[r0:r1, c0:c1] = np.minimum(contact_atten[r0:r1, c0:c1], 0.78)
+
+    lm_g_1025 = np.clip(np.round((55.0 + 190.0 * ndotl) * contact_atten), 0, 255).astype(np.uint8)
+    lm_b_1025 = np.clip(np.round((185.0 + 45.0 * wny) * contact_atten), 0, 255).astype(np.uint8)
     water_depth_1025 = np.clip(SEA_WATER_LEVEL - hp_m, 0.0, 3.0)
     lm_r_1025 = np.clip(np.round((water_depth_1025 / 3.0) * 255.0), 0, 255).astype(np.uint8)
     lm_1025 = np.stack([lm_r_1025, lm_g_1025, lm_b_1025], axis=-1)
@@ -744,15 +940,66 @@ def main():
             os.path.join(RAW_DIR, "Colormaps", f"tx_s{s_idx}.dds"),
         )
 
-    print("=== 5. Configuring PR 3-Zone LiDAR Overgrowth & Shoreline Undergrowth ===")
-    ndmp_u8 = np.fromfile(
-        os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec/Overgrowth/Overgrowth.raw"),
+    # Generate authentic Slovenia Golovec groundhemi.dds (1024x1024 DXT5, South-up)
+    # so undergrowth grass, overgrowth trees, vehicles & soldiers receive Golovec ambient ground tint
+    cm_1024_su = np.array(
+        Image.fromarray(cm_south_up).resize((1024, 1024), Image.Resampling.BILINEAR),
         dtype=np.uint8,
-    ).reshape(2049, 2049)
+    )
+    gh_alpha = lm_g_1025[:1024, :1024].copy()
+    gh_rgba = np.dstack([cm_1024_su, gh_alpha])
+    with open(os.path.join(RAW_DIR, "groundhemi.dds"), "wb") as f:
+        f.write(make_dxt5_dds(gh_rgba, flags=0x00081007))
+
+    # Generate authentic Slovenia Golovec SimpleShadowmap.raw & SimpleShadowmapio.raw
+    ss_u8 = lm_g_1025[:1024, :1024].copy()
+    ss_u8.tofile(os.path.join(RAW_DIR, "SimpleShadowmap.raw"))
+    with open(os.path.join(RAW_DIR, "SimpleShadowmapio.raw"), "wb") as f:
+        f.write(ss_u8.tobytes() + (b"\xff" * 28))
+
+    # Generate High-Clarity Tactical Minimap (Hud/Minimap/ingameMap.dds, 1024x1024 DXT1, North-up)
+    # showing LiDAR hillshading, emerald Ljubljanica river, OSM road network, and all 5 bridges
+    cm_1024_nu = np.flipud(cm_1024_su).astype(np.float32)
+    shade_nu = np.flipud(0.76 + 0.36 * ndotl[:1024, :1024]).astype(np.float32)[:, :, None]
+    mm_rgb = np.clip(cm_1024_nu * shade_nu, 0, 255).astype(np.uint8)
+
+    river_1024_nu = np.flipud(river_1025[:1024, :1024])
+    road_1024_nu = np.flipud(road_1025[:1024, :1024])
+    mm_rgb[road_1024_nu == 1] = (
+        0.55 * mm_rgb[road_1024_nu == 1] + 0.45 * np.array([185, 172, 145])
+    ).astype(np.uint8)
+    mm_rgb[road_1024_nu == 2] = (
+        0.35 * mm_rgb[road_1024_nu == 2] + 0.65 * np.array([218, 212, 195])
+    ).astype(np.uint8)
+    mm_rgb[river_1024_nu] = np.array([36, 106, 92], dtype=np.uint8)
+
+    mm_img = Image.fromarray(mm_rgb)
+    mm_draw = ImageDraw.Draw(mm_img)
+    for b_name, b_type, bcx, bcz, byaw, by_road, b_half in LJUBLJANICA_BRIDGES:
+        rad = math.radians(byaw)
+        ux, uz = math.sin(rad), math.cos(rad)
+        x0 = (bcx - (b_half + 4.0) * ux + 1024.0) / 2.0
+        z0 = 1023.0 - (bcz - (b_half + 4.0) * uz + 1024.0) / 2.0
+        x1 = (bcx + (b_half + 4.0) * ux + 1024.0) / 2.0
+        z1 = 1023.0 - (bcz + (b_half + 4.0) * uz + 1024.0) / 2.0
+        mm_draw.line([(x0, z0), (x1, z1)], fill=(60, 55, 50), width=7)
+        mm_draw.line([(x0, z0), (x1, z1)], fill=(242, 224, 168), width=4)
+
+    mm_dds = make_dxt1_dds(
+        np.array(mm_img, dtype=np.uint8),
+        flags=0x00081007,
+        mipmaps=False,
+        header_mips_if_no_chain=1,
+    )
+    with open(os.path.join(RAW_DIR, "Hud", "Minimap", "ingameMap.dds"), "wb") as f:
+        f.write(mm_dds)
+    print("Wrote groundhemi.dds, SimpleShadowmap.raw, and tactical Hud/Minimap/ingameMap.dds")
+
+    print("=== 5. Configuring PR 3-Zone LiDAR Overgrowth, OvergrowthCollision & Shoreline Undergrowth ===")
     ndmp_1025 = ndmp_u8[::2, ::2]
     canopy_h_1025 = np.where(ndmp_1025 > 0, 1.5 + (ndmp_1025.astype(np.float32) / 255.0) * 18.5, 0.0)
 
-    # Overgrowth.con: 3 zones using existing OvergrowthAtlas0.dds meshes
+    # Overgrowth.con: 3 zones using existing OvergrowthAtlas0.dds meshes with exact FuShe_Pass radius scales
     og_con_txt = "\r\n".join(
         [
             "Overgrowth.viewDistance 500",
@@ -767,16 +1014,16 @@ def main():
             "OvergrowthType.density 8",
             "OvergrowthType.normalScale 1",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 2",
-            "OvergrowthType.minRadiusToOthers 2",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "Overgrowth.addType b",
             "Overgrowth.setActiveType b",
             "OvergrowthType.geometry nc_leafybush01",
             "OvergrowthType.density 7",
             "OvergrowthType.normalScale 1",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 2",
-            "OvergrowthType.minRadiusToOthers 2",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "",
             "Overgrowth.addMaterial WoodsEdge 2",
             "Overgrowth.setActiveMaterial WoodsEdge",
@@ -784,26 +1031,26 @@ def main():
             "Overgrowth.setActiveType a",
             "OvergrowthType.geometry nc_birch01",
             "OvergrowthType.density 5",
-            "OvergrowthType.normalScale 0.4",
+            "OvergrowthType.normalScale 0.15",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 4",
-            "OvergrowthType.minRadiusToOthers 3",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "Overgrowth.addType b",
             "Overgrowth.setActiveType b",
             "OvergrowthType.geometry nc_oak02",
             "OvergrowthType.density 4",
-            "OvergrowthType.normalScale 0.4",
+            "OvergrowthType.normalScale 0.15",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 5",
-            "OvergrowthType.minRadiusToOthers 4",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "Overgrowth.addType c",
             "Overgrowth.setActiveType c",
             "OvergrowthType.geometry nc_medbush01",
             "OvergrowthType.density 6",
             "OvergrowthType.normalScale 1",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 2",
-            "OvergrowthType.minRadiusToOthers 2",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "",
             "Overgrowth.addMaterial WoodsInterior 3",
             "Overgrowth.setActiveMaterial WoodsInterior",
@@ -811,33 +1058,35 @@ def main():
             "Overgrowth.setActiveType a",
             "OvergrowthType.geometry nc_pinebig01",
             "OvergrowthType.density 5",
-            "OvergrowthType.normalScale 0.25",
+            "OvergrowthType.normalScale 0.1",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 5",
-            "OvergrowthType.minRadiusToOthers 4",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "Overgrowth.addType b",
             "Overgrowth.setActiveType b",
             "OvergrowthType.geometry nc_oak01",
             "OvergrowthType.density 4",
-            "OvergrowthType.normalScale 0.3",
+            "OvergrowthType.normalScale 0.15",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 5",
-            "OvergrowthType.minRadiusToOthers 4",
+            "OvergrowthType.minRadiusToSame 0.25",
+            "OvergrowthType.minRadiusToOthers 0.25",
             "Overgrowth.addType c",
             "Overgrowth.setActiveType c",
             "OvergrowthType.geometry nc_pine_cluster01",
             "OvergrowthType.density 3",
-            "OvergrowthType.normalScale 0.3",
+            "OvergrowthType.normalScale 0.1",
             "OvergrowthType.rotationScale 0",
-            "OvergrowthType.minRadiusToSame 6",
-            "OvergrowthType.minRadiusToOthers 5",
+            "OvergrowthType.minRadiusToSame 0.3",
+            "OvergrowthType.minRadiusToOthers 0.3",
             "",
-            r"Overgrowth.path levels\slovenia_golovec\overgrowth\\",
+            "Overgrowth.path levels\\slovenia_golovec\\overgrowth\\",
             "Overgrowth.preLoad",
             "",
         ]
     )
     with open(os.path.join(RAW_DIR, "Overgrowth", "Overgrowth.con"), "w") as f:
+        f.write(og_con_txt)
+    with open(os.path.join(RAW_DIR, "OvergrowthSystem.con"), "w") as f:
         f.write(og_con_txt)
 
     og_raw_1025 = np.zeros((1025, 1025), dtype=np.uint8)
@@ -846,7 +1095,16 @@ def main():
     og_raw_1025[canopy_h_1025 >= 11.5] = 3
     og_raw_1025[road_1025 > 0] = 0
     og_raw_1025[hp_m <= SEA_WATER_LEVEL + 0.6] = 0
+    # Clear overgrowth inside building pads
+    for _, bx, bz, _, _ in placed_buildings:
+        bc = int(np.clip(round((bx + 1024.0) / 2.0), 0, 1024))
+        br = int(np.clip(round((bz + 1024.0) / 2.0), 0, 1024))
+        og_raw_1025[max(0, br - 4) : min(1025, br + 5), max(0, bc - 4) : min(1025, bc + 5)] = 0
     og_raw_1025.tofile(os.path.join(RAW_DIR, "Overgrowth", "Overgrowth.raw"))
+
+    # OvergrowthShadowmap.raw (1025x1025 uint8): 255 everywhere so no tree gets Dragon_Valley black shadows
+    og_shadow = np.full((1025, 1025), 255, dtype=np.uint8)
+    og_shadow.tofile(os.path.join(RAW_DIR, "Overgrowth", "OvergrowthShadowmap.raw"))
 
     # Undergrowth.raw (1025x1025 uint8):
     # 2 = ambientgrass (meadows/fields), 6 = Reed (forest floor sticks/rocks), 14 = reed (river shoreline cattails), 15 = erase
@@ -860,9 +1118,8 @@ def main():
     ug_raw_1025[road_1025 > 0] = 15
     ug_raw_1025[river_1025] = 15
     ug_raw_1025.tofile(os.path.join(RAW_DIR, "Undergrowth.raw"))
-    print("Wrote 3-zone Overgrowth.con, Overgrowth.raw, and shoreline/meadow Undergrowth.raw")
 
-    print("=== 6. Grounding nDMP-Classified OSM Buildings, 5 Bridges & Infrastructure in StaticObjects.con ===")
+    print("=== 6. Grounding nDMP-Classified OSM Buildings, 5 Bridges, Infrastructure & Object Lightmaps ===")
     def sample_height(x: float, z: float) -> float:
         col = np.clip((x + 1024.0) / 2.0, 0.0, 1024.0)
         row = np.clip((z + 1024.0) / 2.0, 0.0, 1024.0)
@@ -877,42 +1134,88 @@ def main():
             + dr * dc * hp_m[r0 + 1, c0 + 1]
         )
 
-    def classify_building_with_ndmp(orig_t: str, x_4k: float, z_4k: float, idx: int) -> str:
-        c = int(np.clip(round((x_4k + 2048.0) / 2.0), 0, 2048))
-        r = int(np.clip(round((z_4k + 2048.0) / 2.0), 0, 2048))
-        v = int(ndmp_u8[max(0, r - 2) : min(2049, r + 3), max(0, c - 2) : min(2049, c + 3)].max())
-        h_roof = 0.0 if v == 0 else (1.5 + (v / 255.0) * 18.5)
+    # Compile OvergrowthCollision.con directly from Slovenian GURS nDMP (og_raw_1025)
+    # grouped into 16x16 patches (rem Patch: px, pz) with Object.isOvergrowth 1
+    zone1_meshes = ["nc_medbush01", "nc_leafybush01", "nc_slybush01"]
+    zone2_meshes = ["nc_birch01", "nc_oak02", "nc_birch_cluster01", "nc_medbush01"]
+    zone3_meshes = ["nc_pinebig01", "nc_pine_cluster01", "nc_pine_cluster02", "nc_oak01"]
 
-        if orig_t == "warehouse_01":
-            return "lrgfactorybuilding" if h_roof >= 11.0 else "lrgstrgbuilding_01"
-        if h_roof >= 15.5 or orig_t in ("citybuilding_01", "eu_office_01", "me_apartment_01"):
-            return "office_building" if (idx % 2 == 0) else "ch_house_modern_01"
-        if h_roof >= 11.2 or orig_t in ("eu_building01", "eu_building02"):
-            return "ch_house_modern_02" if (idx % 2 == 0) else "ch_house_modern_03"
-        if h_roof < 5.2 or orig_t in ("shed_01", "wooden_shed", "barn_01", "barn_02", "farmhouse"):
-            shed_pool = ["storage_shed", "toolshed", "ch_farm_01", "ch_farm_02", "ch_farm_03"]
-            return shed_pool[idx % len(shed_pool)]
-        house_pool = [
-            "ch_house_01",
-            "ch_house_02",
-            "ch_house_05",
-            "ch_house_05_v2",
-            "village_house_1",
-            "village_house_2",
-        ]
-        return house_pool[idx % len(house_pool)]
+    og_col_lines = []
+    og_tree_count = 0
+    for pz in range(16):
+        for px in range(16):
+            og_col_lines.append(f"rem Patch: {px}, {pz}\r\n\r\n")
+            r_start, r_end = pz * 64 + 2, (pz + 1) * 64 - 2
+            c_start, c_end = px * 64 + 2, (px + 1) * 64 - 2
+            for r in range(r_start, r_end, 6):
+                for c in range(c_start, c_end, 6):
+                    h_code = (r * 31 + c * 17) % 100
+                    rj = int(np.clip(r + (h_code % 5) - 2, r_start, r_end - 1))
+                    cj = int(np.clip(c + ((h_code // 5) % 5) - 2, c_start, c_end - 1))
+                    z_val = int(og_raw_1025[rj, cj])
+                    if z_val == 0:
+                        continue
+                    tx = cj * 2.0 - 1024.0
+                    tz = rj * 2.0 - 1024.0
+                    if any((tx - cx) ** 2 + (tz - cz) ** 2 < 24.0**2 for cx, cz in cp_positions):
+                        continue
+                    ty = sample_height(tx, tz)
+                    if ty <= SEA_WATER_LEVEL + 0.6:
+                        continue
+                    if z_val == 1:
+                        mesh = zone1_meshes[h_code % len(zone1_meshes)]
+                    elif z_val == 2:
+                        mesh = zone2_meshes[h_code % len(zone2_meshes)]
+                    else:
+                        mesh = zone3_meshes[h_code % len(zone3_meshes)]
+                    ang = (h_code / 100.0) * 2.0 * math.pi
+                    cs, sn = math.cos(ang), math.sin(ang)
+                    og_col_lines.append(f"Object.create {mesh}\r\n")
+                    og_col_lines.append(
+                        f"Object.absoluteTransformation [{cs:.6f}/0/{-sn:.6f}/0][0/1/0/0][{sn:.6f}/0/{cs:.6f}/0][{tx:.3f}/{ty:.3f}/{tz:.3f}/1]\r\n"
+                    )
+                    og_col_lines.append("Object.isOvergrowth 1\r\n\r\n")
+                    og_tree_count += 1
+            og_col_lines.append("\r\n")
 
-    with open(os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec/StaticObjects.con"), "r") as f:
-        src_so = f.read()
+    with open(os.path.join(RAW_DIR, "Overgrowth", "OvergrowthCollision.con"), "w") as f:
+        f.writelines(og_col_lines)
+    print(f"Wrote 3-zone Overgrowth.con, Overgrowth.raw, Undergrowth.raw & {og_tree_count} LiDAR trees in OvergrowthCollision.con")
 
-    pattern = re.compile(
-        r"Object\.create\s+(\S+)\s*\n"
-        r"Object\.absolutePosition\s+([-\d.]+)/([-\d.]+)/([-\d.]+)\s*\n"
-        r"Object\.rotation\s+([-\d.]+/[-\d.]+/[-\d.]+)\s*\n"
-        r"Object\.layer\s+(\d+)"
-    )
+    # Parse donor UV object lightmap entries from Dragon_Valley LightmapAtlas.tai
+    donor_groups = defaultdict(lambda: defaultdict(list))
+    for line in dv_tai_txt.splitlines():
+        m_tai = re.match(
+            r"^levels/dragon_valley/lightmaps/objects/([^=]+)=(\d+)=([^\s]+)\s+(.+)$",
+            line.strip(),
+        )
+        if m_tai:
+            tmpl, lod, coords, rhs = m_tai.groups()
+            rhs_fixed = rhs.replace("levels/dragon_valley/", "levels/slovenia_golovec/")
+            donor_groups[tmpl][coords].append((lod, rhs_fixed))
+    donor_list = {t: list(cdict.values()) for t, cdict in donor_groups.items()}
 
-    cp_positions = [(cx, cz) for _, _, _, _, cx, cz in CONTROL_POINTS]
+    tai_lines = [
+        "# mods/bf2/levels/slovenia_golovec/lightmaps/objects/LightmapAtlas.tai",
+        "# <filename>\t\t<atlas filename>, <atlas idx>, <woffset>, <hoffset>, <width>, <height>",
+        "",
+    ]
+    seen_tai_keys = set()
+
+    def register_object_lightmap(tmpl: str, x: float, y: float, z: float, idx_seed: int):
+        donors = donor_list.get(tmpl)
+        if not donors:
+            return
+        ix, iy, iz_i = int(x), int(y), int(z)
+        obj_key = (tmpl, ix, iy, iz_i)
+        if obj_key in seen_tai_keys:
+            return
+        seen_tai_keys.add(obj_key)
+        chosen = donors[idx_seed % len(donors)]
+        for lod, rhs in chosen:
+            tai_lines.append(
+                f"levels/slovenia_golovec/lightmaps/objects/{tmpl}={lod}={ix}={iy}={iz_i}.dds\t\t{rhs}"
+            )
 
     so_lines = [
         "rem *** Generated for Slovenia Golovec LiDAR & GURS nDMP Terrain ***",
@@ -922,29 +1225,15 @@ def main():
         "",
     ]
     b_count = 0
-    for idx, m in enumerate(pattern.finditer(src_so)):
-        orig_t, xs, ys, zs, rot, layer = m.groups()
-        x_4k, z_4k = float(xs), float(zs)
-        xn = 0.5 * x_4k
-        zn = 0.5 * z_4k
-        if abs(xn) > 1000.0 or abs(zn) > 1000.0:
-            continue
-        if any((xn - cx) ** 2 + (zn - cz) ** 2 < 28.0**2 for cx, cz in cp_positions):
-            continue
-        if any(
-            (xn - bcx) ** 2 + (zn - bcz) ** 2 < (b_half + 16.0) ** 2
-            for _, _, bcx, bcz, _, _, b_half in LJUBLJANICA_BRIDGES
-        ):
-            continue
-        yn = sample_height(xn, zn)
-        if yn <= SEA_WATER_LEVEL + 0.35:
-            continue
-        t_name = classify_building_with_ndmp(orig_t, x_4k, z_4k, idx)
+    for idx, (t_name, xn, zn, rot, layer) in enumerate(placed_buildings):
+        yn_ground = sample_height(xn, zn)
+        yn = yn_ground + STATIC_PIVOT_Y.get(t_name, 2.83)
         so_lines.append(f"Object.create {t_name}")
         so_lines.append(f"Object.absolutePosition {xn:.3f}/{yn:.3f}/{zn:.3f}")
         so_lines.append(f"Object.rotation {rot}")
         so_lines.append(f"Object.layer {layer}")
         so_lines.append("")
+        register_object_lightmap(t_name, xn, yn, zn, idx)
         b_count += 1
 
     # Emit the 5 Ljubljanica river bridges
@@ -990,57 +1279,52 @@ def main():
             add_bridge_part("woodsteel_bridge_segment", 10.00, seg_y, byaw)
             add_bridge_part("woodsteel_bridge_head", 15.00, head_y, byaw)
 
-    # Emit Curated OSM Infrastructure & Landmark Props
+    # Emit Curated OSM Infrastructure & Landmark Props with exact DICE 3ds Max pivot offsets
     infra_count = 0
     so_lines.append("rem *** Curated OSM Infrastructure & Slovenian Landmarks ***")
-    for tmpl, ix, iz, iyaw in infra_props:
+    for idx, (tmpl, ix, iz, iyaw) in enumerate(infra_props):
         if any((ix - cx) ** 2 + (iz - cz) ** 2 < 22.0**2 for cx, cz in cp_positions):
             continue
-        iy = sample_height(ix, iz)
-        if tmpl != "dam_ironbridge_part2" and iy <= SEA_WATER_LEVEL + 0.25:
+        iy_ground = sample_height(ix, iz)
+        if tmpl != "dam_ironbridge_part2" and iy_ground <= SEA_WATER_LEVEL + 0.25:
             continue
         if tmpl == "dam_ironbridge_part2":
             iy = SEA_WATER_LEVEL + 1.80
+        else:
+            iy = iy_ground + STATIC_PIVOT_Y.get(tmpl, 0.0)
         so_lines.append(f"Object.create {tmpl}")
         so_lines.append(f"Object.absolutePosition {ix:.3f}/{iy:.3f}/{iz:.3f}")
         so_lines.append(f"Object.rotation {iyaw:.1f}/0.0/0.0")
         so_lines.append("Object.layer 1")
         so_lines.append("")
+        register_object_lightmap(tmpl, ix, iy, iz, idx)
         infra_count += 1
 
     with open(os.path.join(RAW_DIR, "StaticObjects.con"), "w") as f:
         f.write("\n".join(so_lines))
+    with open(os.path.join(RAW_DIR, "Lightmaps", "Objects", "LightmapAtlas.tai"), "w") as f:
+        f.write("\r\n".join(tai_lines) + "\r\n")
     print(
-        f"Wrote StaticObjects.con: {b_count} nDMP-classified buildings, {bridge_obj_count} bridge parts, {infra_count} infrastructure props"
+        f"Wrote StaticObjects.con ({b_count} buildings, {bridge_obj_count} bridge parts, {infra_count} props) & LightmapAtlas.tai ({len(seen_tai_keys)} lightmapped objects)"
     )
 
-    og_col_path = os.path.join(RAW_DIR, "Overgrowth", "OvergrowthCollision.con")
-    if os.path.exists(og_col_path):
-        with open(og_col_path, "r") as f:
-            og_lines = f.readlines()
-        og_out = []
-        for line in og_lines:
-            m_pos = re.match(
-                r"^(\s*Object\.absolutePosition\s+)([-\d.]+)/([-\d.]+)/([-\d.]+)(.*)$", line
-            )
-            if m_pos:
-                prefix, xs, ys, zs, suffix = m_pos.groups()
-                x, z = float(xs), float(zs)
-                og_out.append(f"{prefix}{x:.2f}/{sample_height(x, z):.2f}/{z:.2f}{suffix}\n")
-            else:
-                og_out.append(line)
-        with open(og_col_path, "w") as f:
-            f.writelines(og_out)
-
-    print("=== 7. Generating 3D Spatial Audio Landscape (AmbientObjects.con) ===")
+    print("=== 7. Generating 3D Spatial Audio Landscape & Interactive Bird Flocks (AmbientObjects.con) ===")
     ambient_emitters = [
         ("S_Golovec_Weir_Dam", "common/sound/levelambients/dragon_valley/dam_ambient_1.ogg", -40.0, 773.0, 140),
         ("S_Golovec_Weir_Gen", "common/sound/levelambients/dragon_valley/generators.ogg", -52.0, 782.0, 45),
-        ("S_River_Bridge_A1", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -674.5, 771.5, 90),
-        ("S_River_Bridge_Fuzine", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -26.0, 788.4, 80),
-        ("S_River_Bridge_Vevce", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 41.3, 795.5, 80),
-        ("S_River_Bridge_Zadvor", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 269.0, 464.0, 80),
-        ("S_River_Bridge_Kaselj", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 677.6, 882.5, 80),
+        ("S_River_Bridge_A1", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -674.5, 771.5, 95),
+        ("S_River_Bridge_Fuzine", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -26.0, 788.4, 90),
+        ("S_River_Bridge_Vevce", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 41.3, 795.5, 90),
+        ("S_River_Bridge_Zadvor", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 269.0, 464.0, 90),
+        ("S_River_Bridge_Kaselj", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 677.6, 882.5, 90),
+        ("S_River_Course_1", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -850.0, 780.0, 90),
+        ("S_River_Course_2", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -500.0, 785.0, 90),
+        ("S_River_Course_3", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -320.0, 810.0, 90),
+        ("S_River_Course_4", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -160.0, 795.0, 90),
+        ("S_River_Course_5", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 160.0, 620.0, 90),
+        ("S_River_Course_6", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 380.0, 560.0, 90),
+        ("S_River_Course_7", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 510.0, 750.0, 90),
+        ("S_River_Course_8", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 820.0, 890.0, 90),
         ("S_Vevce_PaperMill", "common/sound/levelambients/dragon_valley/factory_ambient.ogg", 145.0, 745.0, 130),
         ("S_Forest_Golovec_W", "common/sound/levelambients/dragon_valley/forest_1.ogg", -450.0, -350.0, 180),
         ("S_Forest_Golovec_C", "common/sound/levelambients/dragon_valley/forest_2.ogg", -100.0, -400.0, 180),
@@ -1051,21 +1335,90 @@ def main():
         ("S_Town_Hrusica", "common/sound/levelambients/dragon_valley/village_ambient.ogg", -50.0, 100.0, 140),
         ("S_Town_Zadvor", "common/sound/levelambients/dragon_valley/village_ambient.ogg", 350.0, 220.0, 140),
     ]
-    amb_lines = [
-        "rem *** Slovenia Golovec 3D Spatial Audio Soundscape ***",
-        "ObjectTemplate.create Sound S_AmbientDefault",
-        "ObjectTemplate.activeSafe Sound S_AmbientDefault",
-        'ObjectTemplate.soundFilename "common/sound/levelambients/dragon_valley/dragon_valley_global_ambient.ogg"',
-        "ObjectTemplate.loopCount 0",
-        "ObjectTemplate.is3dSound 0",
-        "ObjectTemplate.stopType 0",
-        "ObjectTemplate.volume 0.75",
-        "ObjectTemplate.pitch 1",
-        "ObjectTemplate.pan 0.5",
-        "ObjectTemplate.reverbLevel 0",
-        "ObjectTemplate.minDistance 300000",
-        "",
+
+    bird_triggers = [
+        (-420.0, -320.0),
+        (-180.0, -380.0),
+        (60.0, -350.0),
+        (280.0, -300.0),
+        (520.0, -180.0),
+        (-300.0, -120.0),
+        (120.0, -120.0),
+        (-480.0, 760.0),
+        (-120.0, 780.0),
+        (210.0, 510.0),
     ]
+
+    amb_lines = ["rem *** Slovenia Golovec 3D Spatial Audio & Interactive Forest Bird Flocks ***", ""]
+    for idx, (bx, bz) in enumerate(bird_triggers, start=1):
+        t_name = f"Trigger_birds{idx}"
+        e_name = f"{t_name}_AmbientEffect_{idx}"
+        amb_lines.extend(
+            [
+                f"ObjectTemplate.create Trigger {t_name}",
+                f"ObjectTemplate.activeSafe Trigger {t_name}",
+                "ObjectTemplate.isNotSaveable 1",
+                "ObjectTemplate.hasMobilePhysics 0",
+                f"ObjectTemplate.triggerId {idx}",
+                "ObjectTemplate.radius 22",
+                "ObjectTemplate.events 10",
+                "ObjectTemplate.chance 0.5",
+                "ObjectTemplate.minimumTimeBetweenTriggering 30",
+                "",
+                f"ObjectTemplate.create AmbientEffectArea {e_name}",
+                f"ObjectTemplate.activeSafe AmbientEffectArea {e_name}",
+                "ObjectTemplate.isNotSaveable 1",
+                "ObjectTemplate.hasMobilePhysics 0",
+                "ObjectTemplate.radius 2",
+                f"ObjectTemplate.triggerId {idx}",
+                "ObjectTemplate.numNetworkedEffects 1",
+                "ObjectTemplate.projectOnHeightmap 0",
+                "ObjectTemplate.linkedEffectContainer e_dAmb_bird",
+                "",
+            ]
+        )
+
+    amb_lines.extend(["if v_arg1 == host", ""])
+    for idx, (bx, bz) in enumerate(bird_triggers, start=1):
+        t_name = f"Trigger_birds{idx}"
+        e_name = f"{t_name}_AmbientEffect_{idx}"
+        by = sample_height(bx, bz)
+        amb_lines.extend(
+            [
+                f"   Object.create {t_name}",
+                f"   Object.absolutePosition {bx:.3f}/{by:.3f}/{bz:.3f}",
+                "   Object.rotation 0.000/0.000/0.000",
+                "   Object.layer 1",
+                "",
+                f"   Object.create {e_name}",
+                f"   Object.absolutePosition {bx:.3f}/{by + 12.0:.3f}/{bz:.3f}",
+                "   Object.rotation 0.000/0.000/0.000",
+                "   Object.layer 1",
+                "",
+            ]
+        )
+    amb_lines.extend(["endIf", ""])
+
+    amb_lines.extend(
+        [
+            "ObjectTemplate.create Sound S_AmbientDefault",
+            "ObjectTemplate.activeSafe Sound S_AmbientDefault",
+            "ObjectTemplate.lowSamples 2147483647",
+            "ObjectTemplate.mediumSamples 2147483647",
+            'ObjectTemplate.soundFilename "common/sound/levelambients/dragon_valley/dragon_valley_global_ambient.ogg"',
+            "ObjectTemplate.loopCount 0",
+            "ObjectTemplate.is3dSound 0",
+            "ObjectTemplate.stopType 0",
+            "ObjectTemplate.volume 0.75",
+            "ObjectTemplate.pitch 1",
+            "ObjectTemplate.pan 0.5",
+            "ObjectTemplate.reverbLevel 0",
+            "ObjectTemplate.minDistance 300000",
+            "",
+            "Sound.addTrigger S_AmbientDefault",
+            "",
+        ]
+    )
     for s_name, s_file, sx, sz, s_dist in ambient_emitters:
         sy = max(sample_height(sx, sz), SEA_WATER_LEVEL) + 2.0
         amb_lines.extend(
@@ -1073,21 +1426,20 @@ def main():
                 f"ObjectTemplate.create Sound {s_name}",
                 f"ObjectTemplate.activeSafe Sound {s_name}",
                 "ObjectTemplate.isNotSaveable 1",
+                "ObjectTemplate.lowSamples 2147483647",
+                "ObjectTemplate.mediumSamples 2147483647",
                 f'ObjectTemplate.soundFilename "{s_file}"',
                 "ObjectTemplate.loopCount 0",
                 "ObjectTemplate.is3dSound 0",
                 "ObjectTemplate.stopType 0",
-                "ObjectTemplate.volume 0.9",
+                "ObjectTemplate.volume 0.95",
                 "ObjectTemplate.pitch 1",
                 "ObjectTemplate.pan 0.5",
                 "ObjectTemplate.reverbLevel 0",
                 f"ObjectTemplate.position {sx:.3f}/{sy:.3f}/{sz:.3f}",
                 f"ObjectTemplate.minDistance {s_dist}",
                 "",
-                f"Object.create {s_name}",
-                f"Object.absolutePosition {sx:.3f}/{sy:.3f}/{sz:.3f}",
-                "Object.rotation 0.000/0.000/0.000",
-                "Object.layer 1",
+                f"Sound.addTrigger {s_name}",
                 "",
             ]
         )
@@ -1241,6 +1593,8 @@ def main():
         init_txt,
     )
     with open(os.path.join(RAW_DIR, "Init.con"), "w") as f:
+        f.write(init_txt)
+    with open(os.path.join(RAW_DIR, "init.con"), "w") as f:
         f.write(init_txt)
 
     print("=== 9. Repacking client.zip & server.zip and Syncing to Workspace ===")
