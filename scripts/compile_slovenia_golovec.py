@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Compile authentic Slovenia Golovec LiDAR DEM, Orthophoto Colormaps, Lightmaps,
-terraindata.raw, HeightmapPrimary.raw, StaticObjects.con, and GameplayObjects.con
+Compile authentic Slovenia Golovec LiDAR DEM, GURS nDMP Canopy & Building Heights,
+RABA-KGZ Landuse & OSM Road Detailmaps, Project Reality Water-Depth Lightmaps,
+5 Ljubljanica River Bridges, Curated OSM Infrastructure, 3-Zone Forest Overgrowth,
+Shoreline Undergrowth, 3D Spatial Soundscape, and 6-CP Gameplay Layout
 for Battlefield 2 (Refractor 2 Engine).
 """
 import glob
@@ -35,12 +37,26 @@ LJUBLJANICA_BRIDGES = [
     ("Kaselj_Zalog_Bridge", "woodsteel_3", 677.6, 882.5, 152.7, 274.20, 15.00),
 ]
 
+# Six real-world Control Points spanning Golovec Ridge, Litijska Valley, and Ljubljanica Crossings:
+# (cp_id, cp_name, team, radius, cx, cz)
+CONTROL_POINTS = [
+    (1, "CP_EU_BASE", 1, 20, -100.0, -400.0),
+    (2, "CP_GOLOVEC_PASS", 0, 25, 0.0, 0.0),
+    (3, "CP_STEPANJSKO_A1", 0, 22, -620.0, 680.0),
+    (4, "CP_GRAD_FUZINE", 0, 22, -26.0, 735.0),
+    (5, "CP_ZADVOR_SOUTH_BEND", 0, 22, 150.0, 420.0),
+    (6, "CP_MEC_BASE", 2, 20, 80.0, 860.0),
+]
 
-def extract_ljubljanica_river_mask() -> np.ndarray:
+
+def extract_osm_and_raba_layers():
     """
-    Reconstructs the exact 2049x2049 boolean mask of the Ljubljanica river channel
-    (including islands as dry land and the Vevce mill canal) from the cached OSM
-    multipolygon relation (natural=water, water=river) and D96TM projection.
+    Parses cached OSM XML + Slovenian Ministry of Agriculture (RABA-KGZ) polygons
+    in a single pass and returns:
+      - river_mask (2049x2049 bool, South-up)
+      - road_mask_2048 (2048x2048 uint8, South-up: 2=paved road, 1=track/path/rail)
+      - meadow_mask_2048 (2048x2048 bool, South-up: RABA farmland/meadow/orchard)
+      - infra_props: list of (template_name, wx, wz, yaw_deg)
     """
     origin_e = 468498.0
     origin_n = 99466.0
@@ -49,22 +65,47 @@ def extract_ljubljanica_river_mask() -> np.ndarray:
     nodes = {}
     ways = {}
     relations = []
+    power_towers = {}
+    power_poles = {}
+    street_lamps = {}
+    fuel_stations = {}
+
     for path in sorted(glob.glob(os.path.join(WORKSPACE_DIR, ".osm_cache", "osm_*.xml"))):
         tree = ET.parse(path)
         root = tree.getroot()
         for nd in root.findall("node"):
             nid = nd.attrib["id"]
+            if nid in nodes:
+                continue
             lat = float(nd.attrib["lat"])
             lon = float(nd.attrib["lon"])
             e, n = to_d96.transform(lon, lat)
             gx = (e - origin_e + 2048.0) / 4096.0 * 2048.0
             gz = (n - origin_n + 2048.0) / 4096.0 * 2048.0
-            nodes[nid] = (gx, gz)
+            wx = (e - origin_e) * 0.5
+            wz = (n - origin_n) * 0.5
+            nodes[nid] = (gx, gz, wx, wz)
+
+            tags = {t.attrib["k"]: t.attrib["v"] for t in nd.findall("tag")}
+            if tags and abs(wx) <= 985.0 and abs(wz) <= 985.0:
+                if tags.get("power") == "tower":
+                    power_towers[nid] = (wx, wz)
+                elif tags.get("power") == "pole":
+                    power_poles[nid] = (wx, wz)
+                elif tags.get("highway") == "street_lamp":
+                    street_lamps[nid] = (wx, wz)
+                elif tags.get("amenity") == "fuel":
+                    fuel_stations[nid] = (wx, wz)
+
         for way in root.findall("way"):
             wid = way.attrib["id"]
+            if wid in ways:
+                continue
             tags = {t.attrib["k"]: t.attrib["v"] for t in way.findall("tag")}
             nds = [nd.attrib["ref"] for nd in way.findall("nd") if nd.attrib["ref"] in nodes]
-            ways[wid] = (tags, nds, [nodes[r] for r in nds])
+            if nds:
+                ways[wid] = (tags, nds, [(nodes[r][0], nodes[r][1]) for r in nds])
+
         for rel in root.findall("relation"):
             tags = {t.attrib["k"]: t.attrib["v"] for t in rel.findall("tag")}
             members = [
@@ -73,6 +114,7 @@ def extract_ljubljanica_river_mask() -> np.ndarray:
             ]
             relations.append((tags, members))
 
+    # 1. Reconstruct Ljubljanica river mask (2049x2049)
     rel_members = next(m for t, m in relations if t.get("water") == "river")
     outer_ways = [
         (ref, ways[ref][1], ways[ref][2])
@@ -101,16 +143,142 @@ def extract_ljubljanica_river_mask() -> np.ndarray:
             s = list(reversed(s))
         chain.extend(s[1:] if best_d < 1.0 else s)
 
-    img = Image.new("L", (2049, 2049), 0)
-    draw = ImageDraw.Draw(img)
-    draw.polygon(chain, fill=1)
+    river_img = Image.new("L", (2049, 2049), 0)
+    r_draw = ImageDraw.Draw(river_img)
+    r_draw.polygon(chain, fill=1)
     for _, _, ipts in inner_ways:
         if len(ipts) >= 3:
-            draw.polygon(ipts, fill=0)
+            r_draw.polygon(ipts, fill=0)
     if "538835423" in ways:
-        draw.line(ways["538835423"][2], fill=1, width=6)
+        r_draw.line(ways["538835423"][2], fill=1, width=6)
+    river_mask = np.array(river_img, dtype=bool)
 
-    return np.array(img, dtype=bool)
+    # 2. Rasterize RABA-KGZ Farmland/Meadow/Orchard polygons & OSM Roads onto 2048x2048 South-up grids
+    meadow_img = Image.new("L", (2048, 2048), 0)
+    m_draw = ImageDraw.Draw(meadow_img)
+    road_img = Image.new("L", (2048, 2048), 0)
+    rd_draw = ImageDraw.Draw(road_img)
+
+    fence_ways = []
+    motorway_ways = []
+
+    for wid, (tags, nds, pts) in ways.items():
+        lu = tags.get("landuse", "")
+        raba = tags.get("raba:id", "")
+        if (
+            lu in ("farmland", "meadow", "grass", "orchard", "pasture")
+            or raba in ("1100", "1300", "1222", "1221")
+        ) and len(pts) >= 3:
+            m_draw.polygon(pts, fill=1)
+
+        hw = tags.get("highway", "")
+        rw = tags.get("railway", "")
+        if hw in ("motorway", "motorway_link", "primary", "secondary", "tertiary"):
+            rd_draw.line(pts, fill=2, width=7 if "motorway" in hw else 5)
+            if hw in ("motorway", "secondary"):
+                motorway_ways.append((hw, pts))
+        elif hw in ("residential", "unclassified", "service", "living_street"):
+            rd_draw.line(pts, fill=2, width=3)
+        elif hw in ("track", "path", "footway", "cycleway") or rw == "rail":
+            rd_draw.line(pts, fill=1, width=2)
+
+        if tags.get("barrier") in ("fence", "wall") and len(pts) >= 2:
+            fence_ways.append((tags.get("barrier"), pts))
+
+    meadow_mask_2048 = np.array(meadow_img, dtype=bool)
+    road_mask_2048 = np.array(road_img, dtype=np.uint8)
+
+    # 3. Build Curated OSM Infrastructure & Landmark Props (~180 props for old-hardware FPS)
+    infra_props = []
+    placed_xy = []
+
+    def can_place_prop(x: float, z: float, min_dist: float) -> bool:
+        if abs(x) > 980.0 or abs(z) > 980.0:
+            return False
+        for px, pz in placed_xy:
+            if (x - px) ** 2 + (z - pz) ** 2 < min_dist * min_dist:
+                return False
+        return True
+
+    # 3a. MHE Fuzine Hydroelectric Weir & Powerhouse + Grad Fuzine Courtyard Walls + Golovec Peak Antenna
+    infra_props.append(("chpowerstation", -52.0, 782.0, 20.0))
+    infra_props.append(("dam_ironbridge_part2", -42.0, 771.0, 69.6))
+    infra_props.append(("dam_ironbridge_part2", -25.0, 777.0, 69.6))
+    # Grad Fuzine castle courtyard perimeter walls
+    infra_props.append(("stonefence_10m", -42.0, 804.0, 26.0))
+    infra_props.append(("stonefence_10m", -33.0, 808.5, 26.0))
+    infra_props.append(("stonefence_10m", -28.5, 799.5, 116.0))
+    # Golovec Observatory / Ridge Radio Mast
+    infra_props.append(("mi_antenna", -220.0, -520.0, 0.0))
+    infra_props.append(("antennamast", 120.0, -480.0, 0.0))
+    # Vevce Paper Mill industrial smokestack & silos
+    infra_props.append(("chimney_02", 145.0, 745.0, 0.0))
+    infra_props.append(("silo_02", 165.0, 738.0, 35.0))
+
+    for _, px, pz, _ in infra_props:
+        placed_xy.append((px, pz))
+
+    # 3b. High-voltage power towers (14 in OSM)
+    for wx, wz in power_towers.values():
+        if can_place_prop(wx, wz, 55.0):
+            infra_props.append(("antennamast", wx, wz, 0.0))
+            placed_xy.append((wx, wz))
+
+    # 3c. Utility poles (thinned to >=55m spacing, max 50)
+    pole_cnt = 0
+    for wx, wz in power_poles.values():
+        if pole_cnt >= 50:
+            break
+        if can_place_prop(wx, wz, 55.0):
+            infra_props.append(("cablepole", wx, wz, 0.0))
+            placed_xy.append((wx, wz))
+            pole_cnt += 1
+
+    # 3d. Street lamps from OSM nodes + spaced along A1 motorway & Litijska cesta (max 65)
+    lamp_cnt = 0
+    for wx, wz in street_lamps.values():
+        if lamp_cnt >= 35:
+            break
+        if can_place_prop(wx, wz, 45.0):
+            infra_props.append(("lamp_post", wx, wz, 0.0))
+            placed_xy.append((wx, wz))
+            lamp_cnt += 1
+
+    for hw, pts in motorway_ways:
+        if lamp_cnt >= 65:
+            break
+        for i in range(len(pts) - 1):
+            wx0, wz0 = pts[i][0] - 1024.0, pts[i][1] - 1024.0
+            wx1, wz1 = pts[i + 1][0] - 1024.0, pts[i + 1][1] - 1024.0
+            seg_len = math.hypot(wx1 - wx0, wz1 - wz0)
+            if seg_len < 15.0:
+                continue
+            yaw = math.degrees(math.atan2(wx1 - wx0, wz1 - wz0)) % 360.0
+            if can_place_prop(wx0, wz0, 75.0):
+                tmpl = "lamppost_highway_01" if hw == "motorway" else "lamp_post"
+                infra_props.append((tmpl, wx0, wz0, yaw))
+                placed_xy.append((wx0, wz0))
+                lamp_cnt += 1
+                if lamp_cnt >= 65:
+                    break
+
+    # 3e. OSM Walls & Fences (thinned to >=35m spacing, max 45)
+    fence_cnt = 0
+    for btype, pts in fence_ways:
+        if fence_cnt >= 45:
+            break
+        wx0, wz0 = pts[0][0] - 1024.0, pts[0][1] - 1024.0
+        wx1, wz1 = pts[-1][0] - 1024.0, pts[-1][1] - 1024.0
+        if math.hypot(wx1 - wx0, wz1 - wz0) < 10.0:
+            continue
+        yaw = math.degrees(math.atan2(wx1 - wx0, wz1 - wz0)) % 180.0
+        if can_place_prop(wx0, wz0, 35.0):
+            tmpl = "stonefence_10m" if btype == "wall" else "wirefence_24m"
+            infra_props.append((tmpl, wx0, wz0, yaw))
+            placed_xy.append((wx0, wz0))
+            fence_cnt += 1
+
+    return river_mask, road_mask_2048, meadow_mask_2048, infra_props
 
 
 def encode_dxt1_blocks(img_rgb: np.ndarray) -> bytes:
@@ -148,19 +316,20 @@ def encode_dxt1_blocks(img_rgb: np.ndarray) -> bytes:
     return out.tobytes()
 
 
-def make_dxt1_dds(img_rgb: np.ndarray, flags: int = 0x000A1007) -> bytes:
+def make_dxt1_dds(img_rgb: np.ndarray, flags: int = 0x000A1007, mipmaps: bool = True) -> bytes:
     h, w, _ = img_rgb.shape
     mips = []
     cur = img_rgb
     while True:
         mips.append(encode_dxt1_blocks(cur))
-        if cur.shape[0] == 1 and cur.shape[1] == 1:
+        if not mipmaps or (cur.shape[0] == 1 and cur.shape[1] == 1):
             break
         cur = cur.astype(np.uint16)
         cur = (
             (cur[0::2, 0::2] + cur[1::2, 0::2] + cur[0::2, 1::2] + cur[1::2, 1::2]) >> 2
         ).astype(np.uint8)
-    num_mips = len(mips)
+    num_mips = len(mips) if mipmaps else 0
+    caps = 0x401008 if mipmaps else 0x1000
     pitch = max(1, w // 4) * max(1, h // 4) * 8
     hdr = b"DDS " + struct.pack(
         "<7I44xII4s20xII12x",
@@ -174,7 +343,7 @@ def make_dxt1_dds(img_rgb: np.ndarray, flags: int = 0x000A1007) -> bytes:
         32,
         4,
         b"DXT1",
-        0x401008,
+        caps,
         0,
     )
     return hdr + b"".join(mips)
@@ -200,18 +369,17 @@ def compute_lod_delta(H: np.ndarray, step: int) -> np.ndarray:
 
 def main():
     t_start = time.time()
-    print("=== 1. Loading Slovenia Golovec LiDAR Heightmap.raw (2049x2049) & Aligning Ljubljanica River ===")
+    print("=== 1. Extracting OSM Roads, RABA-KGZ Landuse, Infrastructure & Ljubljanica River ===")
+    river_mask, road_mask_2048, meadow_mask_2048, infra_props = extract_osm_and_raba_layers()
+    print(f"Extracted Ljubljanica mask ({river_mask.sum()} px), road network, RABA meadows, and {len(infra_props)} curated infrastructure props")
+
     hm_orig = (
         np.fromfile(os.path.join(WORKSPACE_DIR, "Heightmap.raw"), dtype=np.uint16).reshape(2049, 2049)
         * 0.01
     )
-    river_mask = extract_ljubljanica_river_mask()
 
-    # In the raw LiDAR DEM, the Ljubljanica water surface slopes downstream from 272.76m (West,
-    # above the Fuzine weir) down to 266.79m (East, Zalog), while BF2's SeaWaterLevel is a flat
-    # horizontal plane at 269.50m. Align the local river valley water datum to SEA_WATER_LEVEL
-    # and carve a smooth 2.75m bathymetric channel strictly inside river_mask so water fills the
-    # entire Ljubljanica river from West to East with zero flooding of surrounding fields.
+    # Align the local river valley water datum to SEA_WATER_LEVEL (269.50m)
+    # and carve a smooth 2.75m bathymetric channel strictly inside river_mask.
     h_river_col = np.zeros(2049, dtype=np.float64)
     for x in range(2049):
         rows = np.where(river_mask[:, x])[0]
@@ -228,16 +396,13 @@ def main():
     w_elev = np.clip((305.0 - hm_orig) / 20.0, 0.0, 1.0)
     hm_adj = hm_orig + delta_col * w_elev
 
-    # Ensure all dry land (~river_mask) stays cleanly above SEA_WATER_LEVEL
     bank_min = SEA_WATER_LEVEL + np.clip(dist_outside * 0.25, 0.20, 0.85)
     hm_adj[~river_mask] = np.maximum(hm_adj[~river_mask], bank_min[~river_mask])
 
-    # Carve bathymetric riverbed strictly inside the Ljubljanica river channel
     depth = np.clip(dist_inside * 0.45, 0.25, 2.75)
     hm_adj[river_mask] = SEA_WATER_LEVEL - depth[river_mask]
 
     # Smoothly grade dry-land approach embankments at both ends of each Ljubljanica bridge
-    # so vehicles and infantry transition seamlessly between road terrain and bridge decks.
     yy, xx = np.mgrid[0:2049, 0:2049]
     wx_grid = xx.astype(np.float64) - 1024.0
     wz_grid = yy.astype(np.float64) - 1024.0
@@ -250,7 +415,6 @@ def main():
         along = dx * ux + dz * uz
         across = np.abs(dx * vx + dz * vz)
         for sign in (-1.0, 1.0):
-            # Embankment pad centered at the bridge head abutment on dry land
             d_center = sign * (b_half + 2.0)
             dist_along = np.abs(along - d_center)
             pad_mask = (~river_mask) & (dist_along <= 10.0) & (across <= 10.0)
@@ -264,24 +428,19 @@ def main():
             )
 
     hm_2049 = np.clip(np.round(hm_adj * 100.0), 0, 65535).astype(np.uint16)
-
-    # Decimate by stride 2 to 1025x1025 for BF2 primary heightmap
-    # Note: Heightmap.raw is already Row 0 = South (-Z), Row 2048 = North (+Z), Col 0 = West (-X), Col 2048 = East (+X)
     hp_u16 = hm_2049[::2, ::2].copy()
     assert hp_u16.shape == (1025, 1025)
     hp_m = hp_u16.astype(np.float64) * 0.01
     river_1025 = river_mask[::2, ::2]
+    dist_out_1025 = dist_outside[::2, ::2]
 
     print(f"Primary Heightmap range: {hp_m.min():.2f}m .. {hp_m.max():.2f}m")
     print(f"Ljubljanica river submerged vertices: {(hp_m <= SEA_WATER_LEVEL).sum()} (100% inside river channel)")
     print(f"Dry land vertices <= {SEA_WATER_LEVEL}m: {(hp_m[~river_1025] <= SEA_WATER_LEVEL).sum()}")
-    print(f"Center (0,0) elevation: {hp_m[512, 512]:.2f}m")
-    print(f"South hills mean: {hp_m[:256, :].mean():.2f}m | North river valley mean: {hp_m[768:, :].mean():.2f}m")
 
-    # Write HeightmapPrimary.raw
     hp_u16.tofile(os.path.join(RAW_DIR, "HeightmapPrimary.raw"))
 
-    # Compute surface normals across the full 1025x1025 grid (dx = dz = 2.0m)
+    # Compute surface normals across 1025x1025 grid
     dh_dx = np.zeros_like(hp_m)
     dh_dz = np.zeros_like(hp_m)
     dh_dx[:, 1:-1] = (hp_m[:, 2:] - hp_m[:, :-2]) / 4.0
@@ -300,24 +459,25 @@ def main():
     ny /= nlen
     nz /= nlen
 
-    # Pack normals into BGRA bytes [B=nz, G=ny, R=nx, A=255]
     norm_b = np.clip(np.round((nz + 1.0) * 127.5), 0, 255).astype(np.uint8)
     norm_g = np.clip(np.round(ny * 255.0), 0, 255).astype(np.uint8)
     norm_r = np.clip(np.round((nx + 1.0) * 127.5), 0, 255).astype(np.uint8)
     norm_a = np.full_like(norm_b, 255, dtype=np.uint8)
-    packed_normals = np.stack([norm_b, norm_g, norm_r, norm_a], axis=-1)  # (1025, 1025, 4)
+    packed_normals = np.stack([norm_b, norm_g, norm_r, norm_a], axis=-1)
 
-    # Generate HeightmapPrimary.mat (1025x1025 uint8)
-    # 5 = Grass, 2 = Rock (steep slope), 12 = Wet sand (river channel <= 270m), 0 = border row/col
+    # Generate HeightmapPrimary.mat (1025x1025 uint8) with OSM Road & River Physics
+    # 5 = Grass, 4 = Tarmac/Road, 2 = Rock (steep slope), 12 = Wet sand (riverbank/bed), 0 = border
+    road_1025 = np.zeros((1025, 1025), dtype=np.uint8)
+    road_1025[:1024, :1024] = road_mask_2048[::2, ::2]
     mat = np.full((1025, 1025), 5, dtype=np.uint8)
-    mat[ny < 0.85] = 2
-    mat[hp_m <= 270.0] = 12
+    mat[ny < 0.86] = 2
+    mat[road_1025 > 0] = 4
+    mat[hp_m <= SEA_WATER_LEVEL + 0.5] = 12
     mat[1024, :] = 0
     mat[:, 1024] = 0
     mat.tofile(os.path.join(RAW_DIR, "HeightmapPrimary.mat"))
-    print("Wrote HeightmapPrimary.raw and HeightmapPrimary.mat")
+    print("Wrote HeightmapPrimary.raw and GIS-mapped HeightmapPrimary.mat")
 
-    # Write Secondary Heightmaps (257x257 uint8) with scale 8/1.5/8 -> 188 * 1.5 = 282.0m
     sec_u8 = np.full((257, 257), 188, dtype=np.uint8)
     for sec_name in [
         "HeightmapSecondary_L1U1.raw",
@@ -331,14 +491,14 @@ def main():
     ]:
         sec_u8.tofile(os.path.join(RAW_DIR, sec_name))
 
-    print("=== 2. Updating Heightdata.con and Terrain.con ===")
+    print("=== 2. Updating Heightdata.con, Terrain.con, and Ljubljanica Emerald-Green Water.con ===")
     with open(os.path.join(RAW_DIR, "Heightdata.con"), "r") as f:
         hd_txt = f.read()
     hd_txt = hd_txt.replace("heightmap.setScale 2/0.0025/2", "heightmap.setScale 2/0.01/2")
     hd_txt = hd_txt.replace("heightmap.setScale 8/0.64/8", "heightmap.setScale 8/1.5/8")
     hd_txt = re.sub(
         r"heightmapcluster\.setSeaWaterLevel\s+[\d.]+",
-        "heightmapcluster.setSeaWaterLevel 269.5",
+        f"heightmapcluster.setSeaWaterLevel {SEA_WATER_LEVEL:.1f}",
         hd_txt,
     )
     with open(os.path.join(RAW_DIR, "Heightdata.con"), "w") as f:
@@ -351,24 +511,39 @@ def main():
     with open(os.path.join(RAW_DIR, "Terrain.con"), "w") as f:
         f.write(tc_txt)
 
+    # Tune Water.con to Ljubljanica's Alpine-karst emerald-green color and West-to-East flow
+    water_con_txt = "\r\n".join(
+        [
+            "rem *** Slovenia Golovec - Ljubljanica Karst River Settings ***",
+            "renderer.waterScroll 1/0",
+            "renderer.waterAnimSpeed 45",
+            "renderer.waterColor 0.04/0.14/0.09",
+            "renderer.waterSpecularColor 0.72/0.76/0.70/1.6",
+            "renderer.waterSpecularPower 28",
+            "renderer.waterFogColor 32.00/72.00/56.00",
+            "renderer.waterFogStartEndAndBase 4.00/120.00/1.00/0.50",
+            "terrain.waterSunIntensity 0.85",
+            "",
+        ]
+    )
+    with open(os.path.join(RAW_DIR, "Water.con"), "w") as f:
+        f.write(water_con_txt)
+
     print("=== 3. Compiling terraindata.raw from Dragon_Valley template + Slovenia LiDAR ===")
     with zipfile.ZipFile(os.path.join(DV_DIR, "client.zip"), "r") as zf:
         dv_td = zf.read("terraindata.raw")
-    # Replace levels/dragon_valley -> levels/slovenia_golovec
     td_bytes = bytearray(
         dv_td.replace(b"levels/dragon_valley", b"levels/slovenia_golovec").replace(
             b"Levels/Dragon_Valley", b"Levels/slovenia_golovec"
         )
     )
     shift = len(td_bytes) - len(dv_td)
-    assert shift == 12, f"Expected +12 byte shift, got {shift}"
+    assert shift == 12
 
-    # 3a. Patch Global Header (0x0000..0x0028)
-    struct.pack_into("<fff", td_bytes, 0x0004, 2.0, 0.01, 2.0)  # primaryWorldScale
-    struct.pack_into("<fff", td_bytes, 0x0010, 8.0, 1.5, 8.0)   # secondaryWorldScale
+    struct.pack_into("<fff", td_bytes, 0x0004, 2.0, 0.01, 2.0)
+    struct.pack_into("<fff", td_bytes, 0x0010, 8.0, 1.5, 8.0)
     struct.pack_into("<ff", td_bytes, 0x0020, float(hp_m.max()), float(hp_m.min()))
 
-    # 3b. Patch all 64 Primary QuadPatch blocks
     pos = 782593 + shift
     for p_idx in range(64):
         px, pz, old_maxh, old_minh, old_cx, old_cy, old_cz, old_rad = struct.unpack_from(
@@ -376,9 +551,6 @@ def main():
         )
         ix = px + 4
         iz = pz + 4
-        assert 0 <= ix < 8 and 0 <= iz < 8, f"Invalid patch coords ({px}, {pz})"
-
-        # Extract 129x129 heightmap slice (raw uint16 as float32)
         H_raw = hp_u16[iz * 128 : iz * 128 + 129, ix * 128 : ix * 128 + 129].astype(np.float32)
         H_meters = H_raw * 0.01
         maxh = float(H_meters.max())
@@ -391,34 +563,24 @@ def main():
         struct.pack_into("<iiffffff", td_bytes, pos, px, pz, maxh, minh, cx, cy, cz, rad)
         pos += 32
 
-        # Patch 129x129x24 vertex buffer
         vbuf = np.frombuffer(td_bytes, dtype=np.uint8, count=16641 * 24, offset=pos).reshape(
             129, 129, 24
         )
-        # f1 = H_raw
         vbuf[:, :, 4:8] = H_raw.view(np.uint8).reshape(129, 129, 4)
-        # f2 = LOD1 morph delta (step=2)
         d2 = compute_lod_delta(H_raw, 2)
         vbuf[:, :, 8:12] = d2.view(np.uint8).reshape(129, 129, 4)
-        # f3 = LOD2 morph delta (step=4)
         d3 = compute_lod_delta(H_raw, 4)
         vbuf[:, :, 12:16] = d3.view(np.uint8).reshape(129, 129, 4)
-        # f4 = 0.0
         vbuf[:, :, 16:20] = 0
-        # bytes[20:24] = packed BGRA normal
         vbuf[:, :, 20:24] = packed_normals[iz * 128 : iz * 128 + 129, ix * 128 : ix * 128 + 129]
-
         pos += 16641 * 24
 
-        # Traverse detail layer submeshes until marker == -1
         while True:
             marker = struct.unpack_from("<i", td_bytes, pos)[0]
             pos += 4
             if marker == -1:
                 break
             lid, bx, by, bz, brad, c1, c2, b4, c3 = struct.unpack_from("<iffffii4si", td_bytes, pos)
-            # If lid == 6 (empty underwater patch in Dragon_Valley, i.e., (5,7), (6,7), (7,7)),
-            # change lid to 1 so QuadPatch::load sets isEmptyPatch=0 and loads Colormaps/tx05x07..tx07x07!
             new_lid = 1 if lid == 6 else lid
             new_by = cy
             new_brad = max(float(brad), rad)
@@ -427,15 +589,13 @@ def main():
             )
             pos += 36 + (c1 + c3 * 12) * 2
 
-    assert pos == 44019223 + shift, f"Expected pos {44019223 + shift}, got {pos}"
+    assert pos == 44019223 + shift
 
-    # 3c. Patch all 8 SurroundingPatch blocks
     for sp_idx in range(8):
         sp_id = struct.unpack_from("<i", td_bytes, pos)[0]
         maxh, minh, cx, cy, cz, rad = struct.unpack_from("<ffffff", td_bytes, pos + 4)
         nv = 10693 if (sp_idx % 2 == 0) else 23107
         v_f = np.frombuffer(td_bytes, dtype=np.float32, count=nv, offset=pos + 28)
-        # Keep 0.0 border skirt at 0.0, map non-zero heights to 188.0..245.0 (282m..367.5m at scale 1.5)
         mask = v_f > 0.0
         v_f[mask] = 188.0 + np.clip((v_f[mask] - 65.0) * 0.30, 0.0, 57.0)
         new_maxh = float(v_f.max() * 1.5)
@@ -444,14 +604,13 @@ def main():
         struct.pack_into("<ffffff", td_bytes, pos + 4, new_maxh, new_minh, cx, new_cy, cz, rad)
         pos += 28 + nv * 16
 
-    assert pos == 46182647 + shift, f"Expected pos {46182647 + shift}, got {pos}"
+    assert pos == 46182647 + shift
 
-    # 3d. Patch all 5,461 Frustum Culling & LOD Quadtree Nodes at the end of terraindata.raw
     sp_terminator = struct.unpack_from("<i", td_bytes, pos)[0]
-    assert sp_terminator == -1, f"Expected -1 terminator after SurroundingPatches, got {sp_terminator}"
+    assert sp_terminator == -1
     pos += 4
     num_qt_nodes = struct.unpack_from("<i", td_bytes, pos)[0]
-    assert num_qt_nodes == 5461, f"Expected 5461 quadtree nodes, got {num_qt_nodes}"
+    assert num_qt_nodes == 5461
     pos += 4
     for n_idx in range(num_qt_nodes):
         off = pos + n_idx * 44
@@ -461,23 +620,19 @@ def main():
         r0 = int(np.clip(round((min_z + 1024.0) / 2.0), 0, 1024))
         r1 = int(np.clip(round((max_z + 1024.0) / 2.0), 0, 1024))
         sub_h = hp_m[r0 : r1 + 1, c0 : c1 + 1]
-        new_min_y = float(sub_h.min())
-        new_max_y = float(sub_h.max())
-        struct.pack_into("<6f", td_bytes, off + 16, min_x, new_min_y, min_z, max_x, new_max_y, max_z)
+        struct.pack_into("<6f", td_bytes, off + 16, min_x, float(sub_h.min()), min_z, max_x, float(sub_h.max()), max_z)
 
     pos += num_qt_nodes * 44
-    assert pos == len(td_bytes), f"Expected EOF {len(td_bytes)}, got {pos}"
+    assert pos == len(td_bytes)
 
     with open(os.path.join(RAW_DIR, "terraindata.raw"), "wb") as f:
         f.write(td_bytes)
-    print(f"Wrote terraindata.raw ({len(td_bytes)} bytes, including all {num_qt_nodes} quadtree nodes)")
+    print(f"Wrote terraindata.raw ({len(td_bytes)} bytes)")
 
-    print("=== 4. Generating 64+8 Colormaps, 64 Lightmaps, and missing Detailmaps/LowDetailmaps ===")
+    print("=== 4. Generating GIS Detailmaps, LowDetailmaps, Colormaps & PR Lightmaps ===")
     cm_full = np.array(
         Image.open(os.path.join(WORKSPACE_DIR, "ColorMap_preview.png")).convert("RGB")
     )
-    assert cm_full.shape == (4096, 4096, 3)
-    # Flip vertically so Row 0 is South (iz=0) and Row 4095 is North (iz=7)
     cm_south_up = np.flipud(cm_full)
 
     os.makedirs(os.path.join(RAW_DIR, "Colormaps"), exist_ok=True)
@@ -485,15 +640,43 @@ def main():
     os.makedirs(os.path.join(RAW_DIR, "Detailmaps"), exist_ok=True)
     os.makedirs(os.path.join(RAW_DIR, "LowDetailmaps"), exist_ok=True)
 
-    # Project Reality Lightmap Standard (page14.rst & page15.rst):
-    # 1. Clamp underwater heights to SEA_WATER_LEVEL before computing G (Sun) and B (Sky) normals
-    # 2. Encode Sea Water Depth/Transparency (0 at shoreline -> 255 at >=3.0m depth) in Red (R) channel
+    # Build 2048x2048 GIS Detailmap weights (R=dirt/road/sand, G=grass/meadow, B=rock/slope, R+G+B=255)
+    ny_2048 = np.array(
+        Image.fromarray((ny[:1024, :1024] * 255.0).astype(np.uint8)).resize(
+            (2048, 2048), Image.Resampling.BILINEAR
+        ),
+        dtype=np.float32,
+    ) / 255.0
+    hp_2048 = hm_adj[:2048, :2048]
+    dist_out_2048 = dist_outside[:2048, :2048]
+
+    # Rock weight on steep Golovec slopes
+    w_rock = np.clip((0.92 - ny_2048) / 0.14, 0.0, 1.0)
+    # Dirt/road/riverbank weight on OSM roads & riverbanks/bed
+    w_dirt = np.zeros((2048, 2048), dtype=np.float32)
+    w_dirt[road_mask_2048 == 1] = 0.78
+    w_dirt[road_mask_2048 == 2] = 0.95
+    w_dirt[dist_out_2048 <= 3.0] = np.maximum(w_dirt[dist_out_2048 <= 3.0], 0.85)
+    w_dirt[hp_2048 <= SEA_WATER_LEVEL] = 0.95
+    # RABA meadows & farmland boost grass weight unless road/river
+    w_rock[meadow_mask_2048] *= 0.25
+
+    rem = np.clip(1.0 - w_dirt, 0.0, 1.0)
+    b_ch = np.clip(np.round(rem * w_rock * 255.0), 0, 255).astype(np.uint8)
+    r_ch = np.clip(np.round(w_dirt * 255.0), 0, 255).astype(np.uint8)
+    g_ch = (255 - r_ch.astype(np.int32) - b_ch.astype(np.int32)).clip(0, 255).astype(np.uint8)
+    detail_2048 = np.stack([r_ch, g_ch, b_ch], axis=-1)
+
+    lowdetail_2048 = np.stack([255 - b_ch, np.zeros_like(b_ch), b_ch], axis=-1)
+
+    # Project Reality Lightmap Standard (page14.rst & page15.rst)
     hp_flat = np.maximum(hp_m, SEA_WATER_LEVEL)
     w_dh_dx = np.zeros_like(hp_flat)
     w_dh_dz = np.zeros_like(hp_flat)
     w_dh_dx[:, 1:-1] = (hp_flat[:, 2:] - hp_flat[:, :-2]) / 4.0
     w_dh_dx[:, 0] = (hp_flat[:, 1] - hp_flat[:, 0]) / 2.0
-    w_dh_dx[:, -1] = (hp_flat[:, -1] - hp_flat[:, -2]) / 2.0
+    w_dx_end = (hp_flat[:, -1] - hp_flat[:, -2]) / 2.0
+    w_dh_dx[:, -1] = w_dx_end
     w_dh_dz[1:-1, :] = (hp_flat[2:, :] - hp_flat[:-2, :]) / 4.0
     w_dh_dz[0, :] = (hp_flat[1, :] - hp_flat[0, :]) / 2.0
     w_dh_dz[-1, :] = (hp_flat[-1, :] - hp_flat[-2, :]) / 2.0
@@ -519,22 +702,41 @@ def main():
     lm_1025 = np.stack([lm_r_1025, lm_g_1025, lm_b_1025], axis=-1)
     lm_4096 = np.array(Image.fromarray(lm_1025).resize((4096, 4096), Image.Resampling.BILINEAR))
 
+    zero_256 = np.zeros((256, 256, 3), dtype=np.uint8)
+    zero_dm_dds = make_dxt1_dds(zero_256, flags=0x00081007, mipmaps=False)
+
     for iz in range(8):
         for ix in range(8):
             r0, r1 = iz * 512, (iz + 1) * 512
             c0, c1 = ix * 512, (ix + 1) * 512
             cm_tile = cm_south_up[r0:r1, c0:c1]
-            cm_dds = make_dxt1_dds(cm_tile, flags=0x000A1007)
+            cm_dds = make_dxt1_dds(cm_tile, flags=0x000A1007, mipmaps=True)
             with open(os.path.join(RAW_DIR, "Colormaps", f"tx{ix:02d}x{iz:02d}.dds"), "wb") as f:
                 f.write(cm_dds)
 
             lm_tile = lm_4096[r0:r1, c0:c1]
-            lm_dds = make_dxt1_dds(lm_tile, flags=0x00021007)
+            lm_dds = make_dxt1_dds(lm_tile, flags=0x00021007, mipmaps=True)
             with open(os.path.join(RAW_DIR, "Lightmaps", f"tx{ix:02d}x{iz:02d}.dds"), "wb") as f:
                 f.write(lm_dds)
-        print(f"  Generated Colormaps & Lightmaps row iz={iz}/7")
 
-    # Surrounding colormaps tx_s0.dds .. tx_s7.dds from border tiles
+            dr0, dr1 = iz * 256, (iz + 1) * 256
+            dc0, dc1 = ix * 256, (ix + 1) * 256
+            dm_tile = detail_2048[dr0:dr1, dc0:dc1]
+            dm_dds = make_dxt1_dds(dm_tile, flags=0x00081007, mipmaps=False)
+            with open(os.path.join(RAW_DIR, "Detailmaps", f"tx{ix:02d}x{iz:02d}_1.dds"), "wb") as f:
+                f.write(dm_dds)
+
+            p2_path = os.path.join(RAW_DIR, "Detailmaps", f"tx{ix:02d}x{iz:02d}_2.dds")
+            if os.path.exists(p2_path):
+                with open(p2_path, "wb") as f:
+                    f.write(zero_dm_dds)
+
+            ldm_tile = lowdetail_2048[dr0:dr1, dc0:dc1]
+            ldm_dds = make_dxt1_dds(ldm_tile, flags=0x000A1007, mipmaps=True)
+            with open(os.path.join(RAW_DIR, "LowDetailmaps", f"tx{ix:02d}x{iz:02d}.dds"), "wb") as f:
+                f.write(ldm_dds)
+        print(f"  Generated Colormaps, PR Lightmaps, GIS Detailmaps & LowDetailmaps row iz={iz}/7")
+
     border_coords = [(0, 0), (3, 0), (7, 0), (7, 3), (7, 7), (3, 7), (0, 7), (0, 3)]
     for s_idx, (bix, biz) in enumerate(border_coords):
         shutil.copyfile(
@@ -542,19 +744,125 @@ def main():
             os.path.join(RAW_DIR, "Colormaps", f"tx_s{s_idx}.dds"),
         )
 
-    # Copy tx04x07 detailmap & lowdetailmap to (5,7), (6,7), (7,7)
-    for mx in [5, 6, 7]:
-        shutil.copyfile(
-            os.path.join(RAW_DIR, "Detailmaps", "tx04x07_1.dds"),
-            os.path.join(RAW_DIR, "Detailmaps", f"tx{mx:02d}x07_1.dds"),
-        )
-        shutil.copyfile(
-            os.path.join(RAW_DIR, "LowDetailmaps", "tx04x07.dds"),
-            os.path.join(RAW_DIR, "LowDetailmaps", f"tx{mx:02d}x07.dds"),
-        )
+    print("=== 5. Configuring PR 3-Zone LiDAR Overgrowth & Shoreline Undergrowth ===")
+    ndmp_u8 = np.fromfile(
+        os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec/Overgrowth/Overgrowth.raw"),
+        dtype=np.uint8,
+    ).reshape(2049, 2049)
+    ndmp_1025 = ndmp_u8[::2, ::2]
+    canopy_h_1025 = np.where(ndmp_1025 > 0, 1.5 + (ndmp_1025.astype(np.float32) / 255.0) * 18.5, 0.0)
 
-    print("=== 5. Re-Grounding All 1,309 OSM Buildings in StaticObjects.con ===")
-    # Helper for bilinear height lookup on hp_m (1025x1025 spanning [-1024, +1024])
+    # Overgrowth.con: 3 zones using existing OvergrowthAtlas0.dds meshes
+    og_con_txt = "\r\n".join(
+        [
+            "Overgrowth.viewDistance 500",
+            "Overgrowth.viewDistanceScale 1",
+            "Overgrowth.closeDistPercentage 0.15",
+            "",
+            "Overgrowth.addMaterial Bushes 1",
+            "Overgrowth.setActiveMaterial Bushes",
+            "Overgrowth.addType a",
+            "Overgrowth.setActiveType a",
+            "OvergrowthType.geometry nc_medbush01",
+            "OvergrowthType.density 8",
+            "OvergrowthType.normalScale 1",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 2",
+            "OvergrowthType.minRadiusToOthers 2",
+            "Overgrowth.addType b",
+            "Overgrowth.setActiveType b",
+            "OvergrowthType.geometry nc_leafybush01",
+            "OvergrowthType.density 7",
+            "OvergrowthType.normalScale 1",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 2",
+            "OvergrowthType.minRadiusToOthers 2",
+            "",
+            "Overgrowth.addMaterial WoodsEdge 2",
+            "Overgrowth.setActiveMaterial WoodsEdge",
+            "Overgrowth.addType a",
+            "Overgrowth.setActiveType a",
+            "OvergrowthType.geometry nc_birch01",
+            "OvergrowthType.density 5",
+            "OvergrowthType.normalScale 0.4",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 4",
+            "OvergrowthType.minRadiusToOthers 3",
+            "Overgrowth.addType b",
+            "Overgrowth.setActiveType b",
+            "OvergrowthType.geometry nc_oak02",
+            "OvergrowthType.density 4",
+            "OvergrowthType.normalScale 0.4",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 5",
+            "OvergrowthType.minRadiusToOthers 4",
+            "Overgrowth.addType c",
+            "Overgrowth.setActiveType c",
+            "OvergrowthType.geometry nc_medbush01",
+            "OvergrowthType.density 6",
+            "OvergrowthType.normalScale 1",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 2",
+            "OvergrowthType.minRadiusToOthers 2",
+            "",
+            "Overgrowth.addMaterial WoodsInterior 3",
+            "Overgrowth.setActiveMaterial WoodsInterior",
+            "Overgrowth.addType a",
+            "Overgrowth.setActiveType a",
+            "OvergrowthType.geometry nc_pinebig01",
+            "OvergrowthType.density 5",
+            "OvergrowthType.normalScale 0.25",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 5",
+            "OvergrowthType.minRadiusToOthers 4",
+            "Overgrowth.addType b",
+            "Overgrowth.setActiveType b",
+            "OvergrowthType.geometry nc_oak01",
+            "OvergrowthType.density 4",
+            "OvergrowthType.normalScale 0.3",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 5",
+            "OvergrowthType.minRadiusToOthers 4",
+            "Overgrowth.addType c",
+            "Overgrowth.setActiveType c",
+            "OvergrowthType.geometry nc_pine_cluster01",
+            "OvergrowthType.density 3",
+            "OvergrowthType.normalScale 0.3",
+            "OvergrowthType.rotationScale 0",
+            "OvergrowthType.minRadiusToSame 6",
+            "OvergrowthType.minRadiusToOthers 5",
+            "",
+            r"Overgrowth.path levels\slovenia_golovec\overgrowth\\",
+            "Overgrowth.preLoad",
+            "",
+        ]
+    )
+    with open(os.path.join(RAW_DIR, "Overgrowth", "Overgrowth.con"), "w") as f:
+        f.write(og_con_txt)
+
+    og_raw_1025 = np.zeros((1025, 1025), dtype=np.uint8)
+    og_raw_1025[(canopy_h_1025 >= 1.5) & (canopy_h_1025 < 4.5)] = 1
+    og_raw_1025[(canopy_h_1025 >= 4.5) & (canopy_h_1025 < 11.5)] = 2
+    og_raw_1025[canopy_h_1025 >= 11.5] = 3
+    og_raw_1025[road_1025 > 0] = 0
+    og_raw_1025[hp_m <= SEA_WATER_LEVEL + 0.6] = 0
+    og_raw_1025.tofile(os.path.join(RAW_DIR, "Overgrowth", "Overgrowth.raw"))
+
+    # Undergrowth.raw (1025x1025 uint8):
+    # 2 = ambientgrass (meadows/fields), 6 = Reed (forest floor sticks/rocks), 14 = reed (river shoreline cattails), 15 = erase
+    meadow_1025 = np.zeros((1025, 1025), dtype=bool)
+    meadow_1025[:1024, :1024] = meadow_mask_2048[::2, ::2]
+    ug_raw_1025 = np.full((1025, 1025), 15, dtype=np.uint8)
+    ug_raw_1025[meadow_1025 | (og_raw_1025 == 1) | (og_raw_1025 == 2)] = 2
+    ug_raw_1025[og_raw_1025 == 3] = 6
+    # River shoreline cattails (1m to 5m outside river edge)
+    ug_raw_1025[(~river_1025) & (dist_out_1025 <= 3.5)] = 14
+    ug_raw_1025[road_1025 > 0] = 15
+    ug_raw_1025[river_1025] = 15
+    ug_raw_1025.tofile(os.path.join(RAW_DIR, "Undergrowth.raw"))
+    print("Wrote 3-zone Overgrowth.con, Overgrowth.raw, and shoreline/meadow Undergrowth.raw")
+
+    print("=== 6. Grounding nDMP-Classified OSM Buildings, 5 Bridges & Infrastructure in StaticObjects.con ===")
     def sample_height(x: float, z: float) -> float:
         col = np.clip((x + 1024.0) / 2.0, 0.0, 1024.0)
         row = np.clip((z + 1024.0) / 2.0, 0.0, 1024.0)
@@ -569,25 +877,30 @@ def main():
             + dr * dc * hp_m[r0 + 1, c0 + 1]
         )
 
-    # Map workspace template names to 100% verified vanilla BF2 Objects_server.zip templates
-    template_map = {
-        "eu_house_01": "ch_house_01",
-        "eu_house_02": "ch_house_02",
-        "me_house_01": "village_house_1",
-        "me_house_04": "village_house_2",
-        "me_house_06": "ch_house_05",
-        "me_apartment_01": "ch_house_modern_01",
-        "eu_building01": "ch_house_modern_02",
-        "eu_building02": "ch_house_modern_03",
-        "citybuilding_01": "office_building",
-        "eu_office_01": "office_building",
-        "warehouse_01": "lrgstrgbuilding_01",
-        "farmhouse": "ch_farm_01",
-        "barn_01": "ch_farm_02",
-        "barn_02": "ch_farm_03",
-        "shed_01": "storage_shed",
-        "wooden_shed": "toolshed",
-    }
+    def classify_building_with_ndmp(orig_t: str, x_4k: float, z_4k: float, idx: int) -> str:
+        c = int(np.clip(round((x_4k + 2048.0) / 2.0), 0, 2048))
+        r = int(np.clip(round((z_4k + 2048.0) / 2.0), 0, 2048))
+        v = int(ndmp_u8[max(0, r - 2) : min(2049, r + 3), max(0, c - 2) : min(2049, c + 3)].max())
+        h_roof = 0.0 if v == 0 else (1.5 + (v / 255.0) * 18.5)
+
+        if orig_t == "warehouse_01":
+            return "lrgfactorybuilding" if h_roof >= 11.0 else "lrgstrgbuilding_01"
+        if h_roof >= 15.5 or orig_t in ("citybuilding_01", "eu_office_01", "me_apartment_01"):
+            return "office_building" if (idx % 2 == 0) else "ch_house_modern_01"
+        if h_roof >= 11.2 or orig_t in ("eu_building01", "eu_building02"):
+            return "ch_house_modern_02" if (idx % 2 == 0) else "ch_house_modern_03"
+        if h_roof < 5.2 or orig_t in ("shed_01", "wooden_shed", "barn_01", "barn_02", "farmhouse"):
+            shed_pool = ["storage_shed", "toolshed", "ch_farm_01", "ch_farm_02", "ch_farm_03"]
+            return shed_pool[idx % len(shed_pool)]
+        house_pool = [
+            "ch_house_01",
+            "ch_house_02",
+            "ch_house_05",
+            "ch_house_05_v2",
+            "village_house_1",
+            "village_house_2",
+        ]
+        return house_pool[idx % len(house_pool)]
 
     with open(os.path.join(WORKSPACE_DIR, "levels/slovenia_golovec/StaticObjects.con"), "r") as f:
         src_so = f.read()
@@ -599,32 +912,24 @@ def main():
         r"Object\.layer\s+(\d+)"
     )
 
-    # Collect CP & spawn coordinates from GameplayObjects.con to enforce 25m clearance
-    cp_positions = []
-    gpo_main = os.path.join(RAW_DIR, "GameplayObjects.con")
-    if os.path.exists(gpo_main):
-        with open(gpo_main, "r") as f:
-            for m_pos in re.finditer(
-                r"Object\.absolutePosition\s+([-\d.]+)/([-\d.]+)/([-\d.]+)", f.read()
-            ):
-                cp_positions.append((float(m_pos.group(1)), float(m_pos.group(3))))
+    cp_positions = [(cx, cz) for _, _, _, _, cx, cz in CONTROL_POINTS]
 
     so_lines = [
-        "rem *** Generated for Slovenia Golovec LiDAR Terrain ***",
+        "rem *** Generated for Slovenia Golovec LiDAR & GURS nDMP Terrain ***",
         "if v_arg1 == BF2Editor",
         "console.allowMultipleFileLoad 0",
         "endIf",
         "",
     ]
     b_count = 0
-    for m in pattern.finditer(src_so):
+    for idx, m in enumerate(pattern.finditer(src_so)):
         orig_t, xs, ys, zs, rot, layer = m.groups()
-        t_name = template_map.get(orig_t, "ch_house_01")
-        xn = 0.5 * float(xs)
-        zn = 0.5 * float(zs)
+        x_4k, z_4k = float(xs), float(zs)
+        xn = 0.5 * x_4k
+        zn = 0.5 * z_4k
         if abs(xn) > 1000.0 or abs(zn) > 1000.0:
             continue
-        if any((xn - cx) ** 2 + (zn - cz) ** 2 < 25.0**2 for cx, cz in cp_positions):
+        if any((xn - cx) ** 2 + (zn - cz) ** 2 < 28.0**2 for cx, cz in cp_positions):
             continue
         if any(
             (xn - bcx) ** 2 + (zn - bcz) ** 2 < (b_half + 16.0) ** 2
@@ -632,9 +937,9 @@ def main():
         ):
             continue
         yn = sample_height(xn, zn)
-        # Skip if in the river channel
         if yn <= SEA_WATER_LEVEL + 0.35:
             continue
+        t_name = classify_building_with_ndmp(orig_t, x_4k, z_4k, idx)
         so_lines.append(f"Object.create {t_name}")
         so_lines.append(f"Object.absolutePosition {xn:.3f}/{yn:.3f}/{zn:.3f}")
         so_lines.append(f"Object.rotation {rot}")
@@ -642,7 +947,7 @@ def main():
         so_lines.append("")
         b_count += 1
 
-    # Emit the 5 Ljubljanica river bridges into StaticObjects.con
+    # Emit the 5 Ljubljanica river bridges
     bridge_obj_count = 0
     so_lines.append("rem *** Ljubljanica River Bridges (OSM & LiDAR Aligned) ***")
     for b_name, b_type, bcx, bcz, byaw, by_road, b_half in LJUBLJANICA_BRIDGES:
@@ -665,7 +970,6 @@ def main():
             bridge_obj_count += 1
 
         if b_type == "highway_low":
-            # 2-segment highway bridge (36m central span + two 19.25m heads + central pier support)
             seg_y = by_road - 5.05
             add_bridge_part("highway_bridge_low_head", -28.25, seg_y - 0.018, yaw_opp)
             add_bridge_part("highway_bridge_low_segment", -9.00, seg_y, byaw)
@@ -673,13 +977,11 @@ def main():
             add_bridge_part("highway_bridge_low_segment", 9.00, seg_y, byaw)
             add_bridge_part("highway_bridge_low_head", 28.25, seg_y - 0.018, byaw)
         elif b_type == "stone":
-            # 20m stone bridge + two stone abutment heads
             seg_y = by_road - 4.67
             add_bridge_part("lrg_stonebridge_head", -9.827, seg_y, yaw_opp)
             add_bridge_part("lrg_stonebridge", 0.00, seg_y, byaw)
             add_bridge_part("lrg_stonebridge_head", 9.827, seg_y, byaw)
         elif b_type == "woodsteel_3":
-            # 3-segment wood/steel road bridge (30m central span + two 5m abutment heads)
             seg_y = by_road
             head_y = by_road - 4.90
             add_bridge_part("woodsteel_bridge_head", -15.00, head_y, yaw_opp)
@@ -688,13 +990,30 @@ def main():
             add_bridge_part("woodsteel_bridge_segment", 10.00, seg_y, byaw)
             add_bridge_part("woodsteel_bridge_head", 15.00, head_y, byaw)
 
+    # Emit Curated OSM Infrastructure & Landmark Props
+    infra_count = 0
+    so_lines.append("rem *** Curated OSM Infrastructure & Slovenian Landmarks ***")
+    for tmpl, ix, iz, iyaw in infra_props:
+        if any((ix - cx) ** 2 + (iz - cz) ** 2 < 22.0**2 for cx, cz in cp_positions):
+            continue
+        iy = sample_height(ix, iz)
+        if tmpl != "dam_ironbridge_part2" and iy <= SEA_WATER_LEVEL + 0.25:
+            continue
+        if tmpl == "dam_ironbridge_part2":
+            iy = SEA_WATER_LEVEL + 1.80
+        so_lines.append(f"Object.create {tmpl}")
+        so_lines.append(f"Object.absolutePosition {ix:.3f}/{iy:.3f}/{iz:.3f}")
+        so_lines.append(f"Object.rotation {iyaw:.1f}/0.0/0.0")
+        so_lines.append("Object.layer 1")
+        so_lines.append("")
+        infra_count += 1
+
     with open(os.path.join(RAW_DIR, "StaticObjects.con"), "w") as f:
         f.write("\n".join(so_lines))
     print(
-        f"Wrote StaticObjects.con with {b_count} grounded OSM buildings and {bridge_obj_count} bridge objects across {len(LJUBLJANICA_BRIDGES)} Ljubljanica bridges"
+        f"Wrote StaticObjects.con: {b_count} nDMP-classified buildings, {bridge_obj_count} bridge parts, {infra_count} infrastructure props"
     )
 
-    # Re-ground OvergrowthCollision.con
     og_col_path = os.path.join(RAW_DIR, "Overgrowth", "OvergrowthCollision.con")
     if os.path.exists(og_col_path):
         with open(og_col_path, "r") as f:
@@ -712,48 +1031,207 @@ def main():
                 og_out.append(line)
         with open(og_col_path, "w") as f:
             f.writelines(og_out)
-        print("Re-grounded Overgrowth/OvergrowthCollision.con")
 
-    print("=== 6. Re-Grounding Control Points & Spawns in GameplayObjects.con & Init.con ===")
-    # Update every Object.absolutePosition X/Y/Z in GameplayObjects.con to match hp_m(X, Z)
-    def ground_gpo_file(filepath: str):
-        if not os.path.exists(filepath):
-            return
-        with open(filepath, "r") as f:
-            lines = f.readlines()
-        out_lines = []
-        current_obj = ""
-        for line in lines:
-            m_create = re.match(r"^\s*Object\.create\s+(\S+)", line)
-            if m_create:
-                current_obj = m_create.group(1).lower()
-            m_pos = re.match(
-                r"^(\s*Object\.absolutePosition\s+)([-\d.]+)/([-\d.]+)/([-\d.]+)(.*)$", line
+    print("=== 7. Generating 3D Spatial Audio Landscape (AmbientObjects.con) ===")
+    ambient_emitters = [
+        ("S_Golovec_Weir_Dam", "common/sound/levelambients/dragon_valley/dam_ambient_1.ogg", -40.0, 773.0, 140),
+        ("S_Golovec_Weir_Gen", "common/sound/levelambients/dragon_valley/generators.ogg", -52.0, 782.0, 45),
+        ("S_River_Bridge_A1", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -674.5, 771.5, 90),
+        ("S_River_Bridge_Fuzine", "common/sound/levelambients/dragon_valley/small_river_1.ogg", -26.0, 788.4, 80),
+        ("S_River_Bridge_Vevce", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 41.3, 795.5, 80),
+        ("S_River_Bridge_Zadvor", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 269.0, 464.0, 80),
+        ("S_River_Bridge_Kaselj", "common/sound/levelambients/dragon_valley/small_river_1.ogg", 677.6, 882.5, 80),
+        ("S_Vevce_PaperMill", "common/sound/levelambients/dragon_valley/factory_ambient.ogg", 145.0, 745.0, 130),
+        ("S_Forest_Golovec_W", "common/sound/levelambients/dragon_valley/forest_1.ogg", -450.0, -350.0, 180),
+        ("S_Forest_Golovec_C", "common/sound/levelambients/dragon_valley/forest_2.ogg", -100.0, -400.0, 180),
+        ("S_Forest_Golovec_E", "common/sound/levelambients/dragon_valley/forest_3.ogg", 300.0, -350.0, 180),
+        ("S_Forest_Zadvor_S", "common/sound/levelambients/dragon_valley/forest_1.ogg", 550.0, -200.0, 180),
+        ("S_Town_Stepanjsko", "common/sound/levelambients/dragon_valley/village_ambient.ogg", -550.0, 580.0, 140),
+        ("S_Town_Fuzine", "common/sound/levelambients/dragon_valley/village_ambient.ogg", -150.0, 680.0, 140),
+        ("S_Town_Hrusica", "common/sound/levelambients/dragon_valley/village_ambient.ogg", -50.0, 100.0, 140),
+        ("S_Town_Zadvor", "common/sound/levelambients/dragon_valley/village_ambient.ogg", 350.0, 220.0, 140),
+    ]
+    amb_lines = [
+        "rem *** Slovenia Golovec 3D Spatial Audio Soundscape ***",
+        "ObjectTemplate.create Sound S_AmbientDefault",
+        "ObjectTemplate.activeSafe Sound S_AmbientDefault",
+        'ObjectTemplate.soundFilename "common/sound/levelambients/dragon_valley/dragon_valley_global_ambient.ogg"',
+        "ObjectTemplate.loopCount 0",
+        "ObjectTemplate.is3dSound 0",
+        "ObjectTemplate.stopType 0",
+        "ObjectTemplate.volume 0.75",
+        "ObjectTemplate.pitch 1",
+        "ObjectTemplate.pan 0.5",
+        "ObjectTemplate.reverbLevel 0",
+        "ObjectTemplate.minDistance 300000",
+        "",
+    ]
+    for s_name, s_file, sx, sz, s_dist in ambient_emitters:
+        sy = max(sample_height(sx, sz), SEA_WATER_LEVEL) + 2.0
+        amb_lines.extend(
+            [
+                f"ObjectTemplate.create Sound {s_name}",
+                f"ObjectTemplate.activeSafe Sound {s_name}",
+                "ObjectTemplate.isNotSaveable 1",
+                f'ObjectTemplate.soundFilename "{s_file}"',
+                "ObjectTemplate.loopCount 0",
+                "ObjectTemplate.is3dSound 0",
+                "ObjectTemplate.stopType 0",
+                "ObjectTemplate.volume 0.9",
+                "ObjectTemplate.pitch 1",
+                "ObjectTemplate.pan 0.5",
+                "ObjectTemplate.reverbLevel 0",
+                f"ObjectTemplate.position {sx:.3f}/{sy:.3f}/{sz:.3f}",
+                f"ObjectTemplate.minDistance {s_dist}",
+                "",
+                f"Object.create {s_name}",
+                f"Object.absolutePosition {sx:.3f}/{sy:.3f}/{sz:.3f}",
+                "Object.rotation 0.000/0.000/0.000",
+                "Object.layer 1",
+                "",
+            ]
+        )
+    with open(os.path.join(RAW_DIR, "AmbientObjects.con"), "w") as f:
+        f.write("\r\n".join(amb_lines))
+
+    print("=== 8. Generating 6-CP Landmark & Bridge GameplayObjects.con with Vehicles ===")
+    gpo_lines = [
+        "rem *** Slovenia Golovec - 6-Landmark Conquest Layout (Full River & Bridge Combat Area) ***",
+        "CombatAreaManager.use 1",
+        "CombatAreaManager.timeAllowedOutside 10.000000",
+        "",
+        "CombatArea.create CombatArea_Golovec",
+        "CombatArea.min 0.000000/0.000000",
+        "CombatArea.max 0.000000/0.000000",
+        "CombatArea.addAreaPoint -950.000/-950.000",
+        "CombatArea.addAreaPoint 950.000/-950.000",
+        "CombatArea.addAreaPoint 950.000/950.000",
+        "CombatArea.addAreaPoint -950.000/950.000",
+        "CombatArea.team 0",
+        "CombatArea.vehicles 4",
+        "CombatArea.layer 1",
+        "CombatArea.usedByPathFinding 1",
+        "",
+        "if v_arg1 == host",
+        "",
+    ]
+
+    # Vehicle spawner definitions per CP: (spawner_suffix, team1_veh, team2_veh, dx, dz, yaw)
+    cp_vehicles = {
+        1: [
+            ("tank", "tnk_type98", "ustnk_m1a2", 14.0, 12.0, 0.0),
+            ("apc", "apc_wz551", "usapc_lav25", -14.0, 12.0, 0.0),
+            ("jeep1", "jep_paratrooper", "jeep_faav", 10.0, 20.0, 0.0),
+        ],
+        2: [
+            ("apc", "apc_wz551", "usapc_lav25", 14.0, 10.0, 0.0),
+            ("jeep", "jep_paratrooper", "jeep_faav", -12.0, 10.0, 0.0),
+        ],
+        3: [
+            ("tank", "tnk_type98", "ustnk_m1a2", 15.0, 10.0, 20.0),
+            ("jeep", "jep_paratrooper", "jeep_faav", -12.0, 12.0, 20.0),
+        ],
+        4: [
+            ("apc", "apc_wz551", "usapc_lav25", 14.0, -10.0, 116.0),
+            ("jeep", "jep_paratrooper", "jeep_faav", -12.0, -10.0, 116.0),
+        ],
+        5: [
+            ("apc", "apc_wz551", "usapc_lav25", -14.0, 10.0, 12.0),
+            ("jeep", "jep_paratrooper", "jeep_faav", 12.0, 10.0, 12.0),
+        ],
+        6: [
+            ("tank", "tnk_type98", "ustnk_m1a2", -14.0, -12.0, 180.0),
+            ("apc", "apc_wz551", "usapc_lav25", 14.0, -12.0, 180.0),
+            ("jeep1", "jep_paratrooper", "jeep_faav", -10.0, -20.0, 180.0),
+        ],
+    }
+
+    for cp_id, cp_name, team, radius, cx, cz in CONTROL_POINTS:
+        for suf, v1, v2, vdx, vdz, vyaw in cp_vehicles.get(cp_id, []):
+            sp_name = f"{cp_name}_{suf}"
+            vx, vz = cx + vdx, cz + vdz
+            vy = sample_height(vx, vz) + 1.80
+            gpo_lines.extend(
+                [
+                    f"ObjectTemplate.create ObjectSpawner {sp_name}",
+                    f"ObjectTemplate.activeSafe ObjectSpawner {sp_name}",
+                    "ObjectTemplate.isNotSaveable 1",
+                    "ObjectTemplate.hasMobilePhysics 0",
+                    f"ObjectTemplate.setObjectTemplate 1 {v1}",
+                    f"ObjectTemplate.setObjectTemplate 2 {v2}",
+                    "ObjectTemplate.minSpawnDelay 20",
+                    "ObjectTemplate.maxSpawnDelay 40",
+                    "",
+                    f"Object.create {sp_name}",
+                    f"Object.absolutePosition {vx:.3f}/{vy:.3f}/{vz:.3f}",
+                    f"Object.rotation {vyaw:.1f}/0.0/0.0",
+                    f"Object.setControlPointId {cp_id}",
+                    "Object.layer 1",
+                    "",
+                ]
             )
-            if m_pos:
-                prefix, xs, ys, zs, suffix = m_pos.groups()
-                x, z = float(xs), float(zs)
-                # Ensure northern MEC base is at Z=420 (dry town ground ~273.5m)
-                y_ground = sample_height(x, z)
-                if "spawner" in current_obj or "aa_" in current_obj or "art_" in current_obj or "at_" in current_obj or "apc_" in current_obj or "tank_" in current_obj or "jeep_" in current_obj:
-                    y_new = y_ground + 1.8
-                elif "cp_" in current_obj:
-                    y_new = y_ground + 0.15
-                else:
-                    y_new = y_ground + 1.2
-                out_lines.append(f"{prefix}{x:.3f}/{y_new:.3f}/{z:.3f}{suffix}\n")
-            else:
-                out_lines.append(line)
-        with open(filepath, "w") as f:
-            f.writelines(out_lines)
 
-    ground_gpo_file(os.path.join(RAW_DIR, "GameplayObjects.con"))
+    gpo_lines.append("endIf")
+    gpo_lines.append("")
+
+    for cp_id, cp_name, team, radius, cx, cz in CONTROL_POINTS:
+        cy = sample_height(cx, cz) + 0.15
+        gpo_lines.extend(
+            [
+                f"ObjectTemplate.create ControlPoint {cp_name}",
+                f"ObjectTemplate.activeSafe ControlPoint {cp_name}",
+                'ObjectTemplate.modifiedByUser "BF2"',
+                "ObjectTemplate.setNetworkableInfo ControlPointInfo",
+                "ObjectTemplate.isNotSaveable 1",
+                "ObjectTemplate.hasMobilePhysics 0",
+                "ObjectTemplate.hasCollisionPhysics 1",
+                "ObjectTemplate.physicsType Mesh",
+                "ObjectTemplate.addTemplate flagpole",
+                f"ObjectTemplate.setControlPointName {cp_name}",
+                f"ObjectTemplate.radius {radius}",
+                f"ObjectTemplate.team {team}",
+                f"ObjectTemplate.controlPointId {cp_id}",
+                "ObjectTemplate.timeToGetControl 15",
+                "ObjectTemplate.timeToLoseControl 15",
+                "ObjectTemplate.unableToChangeTeam 0",
+                "ObjectTemplate.onlyTakeableByTeam 0",
+                "",
+                f"Object.create {cp_name}",
+                f"Object.absolutePosition {cx:.3f}/{cy:.3f}/{cz:.3f}",
+                "Object.rotation 0.000/0.000/0.000",
+                "Object.layer 1",
+                "",
+            ]
+        )
+        for sp_idx, (sdx, sdz, syaw) in enumerate([(-6.0, -5.0, 0.0), (6.0, 5.0, 180.0)], start=1):
+            sp_id = f"SP_{cp_name}_{sp_idx}"
+            sx, sz = cx + sdx, cz + sdz
+            sy = sample_height(sx, sz) + 1.25
+            gpo_lines.extend(
+                [
+                    f"ObjectTemplate.create SpawnPoint {sp_id}",
+                    f"ObjectTemplate.activeSafe SpawnPoint {sp_id}",
+                    "ObjectTemplate.isNotSaveable 1",
+                    "ObjectTemplate.setSpawnPositionOffset 0/1.25/0",
+                    f"ObjectTemplate.setControlPointId {cp_id}",
+                    "",
+                    f"Object.create {sp_id}",
+                    f"Object.absolutePosition {sx:.3f}/{sy:.3f}/{sz:.3f}",
+                    f"Object.rotation {syaw:.1f}/0.000/0.000",
+                    "Object.layer 1",
+                    "",
+                ]
+            )
+
+    gpo_txt = "\n".join(gpo_lines)
+    with open(os.path.join(RAW_DIR, "GameplayObjects.con"), "w") as f:
+        f.write(gpo_txt)
     for root, _, files in os.walk(os.path.join(RAW_DIR, "GameModes")):
         for fn in files:
             if fn.lower() == "gameplayobjects.con":
-                ground_gpo_file(os.path.join(root, fn))
+                with open(os.path.join(root, fn), "w") as f:
+                    f.write(gpo_txt)
 
-    # Update BeforeSpawnCamera in Init.con to 0 / (sample_height(0,0) + 45) / 0
     cam_y = sample_height(0.0, 0.0) + 45.0
     with open(os.path.join(RAW_DIR, "Init.con"), "r") as f:
         init_txt = f.read()
@@ -765,7 +1243,7 @@ def main():
     with open(os.path.join(RAW_DIR, "Init.con"), "w") as f:
         f.write(init_txt)
 
-    print("=== 7. Repacking client.zip & server.zip and Syncing to Workspace ===")
+    print("=== 9. Repacking client.zip & server.zip and Syncing to Workspace ===")
     for archive_name in ["client.zip", "server.zip"]:
         zip_path = os.path.join(LEVEL_DIR, archive_name)
         with zipfile.ZipFile(zip_path, "r") as zf_in:
