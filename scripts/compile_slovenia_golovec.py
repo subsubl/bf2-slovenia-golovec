@@ -6,6 +6,7 @@ for Battlefield 2 (Refractor 2 Engine).
 """
 import glob
 import io
+import math
 import os
 import re
 import shutil
@@ -23,6 +24,16 @@ LEVEL_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/slovenia_golovec
 RAW_DIR = os.path.join(LEVEL_DIR, "_raw_files")
 DV_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/Dragon_Valley"
 SEA_WATER_LEVEL = 269.50
+
+# Five authentic Ljubljanica river bridge crossings from OSM & LiDAR:
+# (name, bridge_type, cx, cz, yaw_deg, y_road, half_span_m)
+LJUBLJANICA_BRIDGES = [
+    ("A1_Motorway_Bridge", "highway_low", -674.5, 771.5, 169.8, 275.50, 28.25),
+    ("Fuzine_Castle_Bridge", "stone", -26.0, 788.4, 116.0, 272.50, 9.827),
+    ("Vevce_Bridge", "woodsteel_3", 41.3, 795.5, 6.8, 273.60, 15.00),
+    ("Zadvor_Vevce_South_Bridge", "stone", 269.0, 464.0, 12.0, 272.30, 9.827),
+    ("Kaselj_Zalog_Bridge", "woodsteel_3", 677.6, 882.5, 152.7, 274.20, 15.00),
+]
 
 
 def extract_ljubljanica_river_mask() -> np.ndarray:
@@ -224,6 +235,33 @@ def main():
     # Carve bathymetric riverbed strictly inside the Ljubljanica river channel
     depth = np.clip(dist_inside * 0.45, 0.25, 2.75)
     hm_adj[river_mask] = SEA_WATER_LEVEL - depth[river_mask]
+
+    # Smoothly grade dry-land approach embankments at both ends of each Ljubljanica bridge
+    # so vehicles and infantry transition seamlessly between road terrain and bridge decks.
+    yy, xx = np.mgrid[0:2049, 0:2049]
+    wx_grid = xx.astype(np.float64) - 1024.0
+    wz_grid = yy.astype(np.float64) - 1024.0
+    for b_name, b_type, bcx, bcz, byaw, by_road, b_half in LJUBLJANICA_BRIDGES:
+        rad = math.radians(byaw)
+        ux, uz = math.sin(rad), math.cos(rad)
+        vx, vz = math.cos(rad), -math.sin(rad)
+        dx = wx_grid - bcx
+        dz = wz_grid - bcz
+        along = dx * ux + dz * uz
+        across = np.abs(dx * vx + dz * vz)
+        for sign in (-1.0, 1.0):
+            # Embankment pad centered at the bridge head abutment on dry land
+            d_center = sign * (b_half + 2.0)
+            dist_along = np.abs(along - d_center)
+            pad_mask = (~river_mask) & (dist_along <= 10.0) & (across <= 10.0)
+            w_pad = (
+                np.clip(1.0 - dist_along / 10.0, 0.0, 1.0)
+                * np.clip(1.0 - across / 10.0, 0.0, 1.0)
+            )
+            target_h = by_road - 0.15
+            hm_adj[pad_mask] = (
+                (1.0 - w_pad[pad_mask]) * hm_adj[pad_mask] + w_pad[pad_mask] * target_h
+            )
 
     hm_2049 = np.clip(np.round(hm_adj * 100.0), 0, 65535).astype(np.uint16)
 
@@ -588,6 +626,11 @@ def main():
             continue
         if any((xn - cx) ** 2 + (zn - cz) ** 2 < 25.0**2 for cx, cz in cp_positions):
             continue
+        if any(
+            (xn - bcx) ** 2 + (zn - bcz) ** 2 < (b_half + 16.0) ** 2
+            for _, _, bcx, bcz, _, _, b_half in LJUBLJANICA_BRIDGES
+        ):
+            continue
         yn = sample_height(xn, zn)
         # Skip if in the river channel
         if yn <= SEA_WATER_LEVEL + 0.35:
@@ -599,9 +642,57 @@ def main():
         so_lines.append("")
         b_count += 1
 
+    # Emit the 5 Ljubljanica river bridges into StaticObjects.con
+    bridge_obj_count = 0
+    so_lines.append("rem *** Ljubljanica River Bridges (OSM & LiDAR Aligned) ***")
+    for b_name, b_type, bcx, bcz, byaw, by_road, b_half in LJUBLJANICA_BRIDGES:
+        rad = math.radians(byaw)
+        ux, uz = math.sin(rad), math.cos(rad)
+        yaw_opp = (byaw + 180.0) % 360.0
+        if yaw_opp > 180.0:
+            yaw_opp -= 360.0
+
+        def add_bridge_part(tmpl: str, dist_m: float, pos_y: float, rot_yaw: float):
+            nonlocal bridge_obj_count
+            px = bcx + dist_m * ux
+            pz = bcz + dist_m * uz
+            so_lines.append(f"Object.create {tmpl}")
+            so_lines.append(f"Object.absolutePosition {px:.3f}/{pos_y:.3f}/{pz:.3f}")
+            so_lines.append(f"Object.rotation {rot_yaw:.1f}/0.0/0.0")
+            so_lines.append("Object.layer 1")
+            so_lines.append("Object.setLightSourceMask 6")
+            so_lines.append("")
+            bridge_obj_count += 1
+
+        if b_type == "highway_low":
+            # 2-segment highway bridge (36m central span + two 19.25m heads + central pier support)
+            seg_y = by_road - 5.05
+            add_bridge_part("highway_bridge_low_head", -28.25, seg_y - 0.018, yaw_opp)
+            add_bridge_part("highway_bridge_low_segment", -9.00, seg_y, byaw)
+            add_bridge_part("highway_bridge_support", 0.00, seg_y - 13.95, byaw)
+            add_bridge_part("highway_bridge_low_segment", 9.00, seg_y, byaw)
+            add_bridge_part("highway_bridge_low_head", 28.25, seg_y - 0.018, byaw)
+        elif b_type == "stone":
+            # 20m stone bridge + two stone abutment heads
+            seg_y = by_road - 4.67
+            add_bridge_part("lrg_stonebridge_head", -9.827, seg_y, yaw_opp)
+            add_bridge_part("lrg_stonebridge", 0.00, seg_y, byaw)
+            add_bridge_part("lrg_stonebridge_head", 9.827, seg_y, byaw)
+        elif b_type == "woodsteel_3":
+            # 3-segment wood/steel road bridge (30m central span + two 5m abutment heads)
+            seg_y = by_road
+            head_y = by_road - 4.90
+            add_bridge_part("woodsteel_bridge_head", -15.00, head_y, yaw_opp)
+            add_bridge_part("woodsteel_bridge_segment", -10.00, seg_y, byaw)
+            add_bridge_part("woodsteel_bridge_segment", 0.00, seg_y, byaw)
+            add_bridge_part("woodsteel_bridge_segment", 10.00, seg_y, byaw)
+            add_bridge_part("woodsteel_bridge_head", 15.00, head_y, byaw)
+
     with open(os.path.join(RAW_DIR, "StaticObjects.con"), "w") as f:
         f.write("\n".join(so_lines))
-    print(f"Wrote StaticObjects.con with {b_count} grounded OSM buildings")
+    print(
+        f"Wrote StaticObjects.con with {b_count} grounded OSM buildings and {bridge_obj_count} bridge objects across {len(LJUBLJANICA_BRIDGES)} Ljubljanica bridges"
+    )
 
     # Re-ground OvergrowthCollision.con
     og_col_path = os.path.join(RAW_DIR, "Overgrowth", "OvergrowthCollision.con")
