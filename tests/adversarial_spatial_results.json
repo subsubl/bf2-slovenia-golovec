@@ -1,0 +1,41 @@
+{
+  "verdict": "CONFIRM",
+  "total_buildings": 1309,
+  "min_dist_2d": 30.003579153161088,
+  "min_dist_3d": 30.007323072876773,
+  "duplicate_pairs": 0,
+  "pairs_under_2m": 0,
+  "pairs_under_30m": 0,
+  "obb_intersections": 0,
+  "min_obb_clearance": 0.01400166361349875,
+  "pitch_exact_zero": true,
+  "roll_exact_zero": true,
+  "yaw_in_bounds": true,
+  "yaw_min": -179.851,
+  "yaw_max": 179.965,
+  "submerged_buildings": 0,
+  "max_elevation_deviation": 0.0005990750000250955,
+  "named_regions": {
+    "Golovec Focal Point & Pass": 191,
+    "Golovec Ridge & Forest Uplands": 372,
+    "Golovec High Ridge (Y >= 300m)": 90,
+    "Bizovik Sector": 646,
+    "Sostro (East / NE Valley)": 228,
+    "Ljubljana / Poljane Urban Edge (NW)": 176,
+    "Rudnik / Barje Fringe (SW)": 9,
+    "Lavrica / Orle Countryside (SE)": 249
+  },
+  "unique_templates": 16,
+  "top_mesh": [
+    "eu_house_02",
+    356
+  ],
+  "bounds": {
+    "x_min": -2038.597,
+    "x_max": 2033.613,
+    "z_min": -2023.039,
+    "z_max": 2040.384,
+    "y_min": 270.58,
+    "y_max": 445.861
+  }
+}

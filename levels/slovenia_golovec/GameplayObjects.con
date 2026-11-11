@@ -1,0 +1,162 @@
+rem *** Combat Area Boundary (Anti-Clockwise Winding) ***
+CombatAreaManager.use 1
+CombatAreaManager.timeAllowedOutside 10.000000
+
+CombatArea.create CombatArea_Golovec
+CombatArea.min 0.000000/0.000000
+CombatArea.max 0.000000/0.000000
+CombatArea.addAreaPoint -600.000/765.000
+CombatArea.addAreaPoint 600.000/765.000
+CombatArea.addAreaPoint 600.000/1965.000
+CombatArea.addAreaPoint -600.000/1965.000
+CombatArea.team 0
+CombatArea.vehicles 4
+CombatArea.layer 1
+CombatArea.usedByPathFinding 1
+
+rem -----------------------------------------------------------------
+rem Control Point 1: US/EU Southern Base (Team 1)
+rem -----------------------------------------------------------------
+ObjectTemplate.create ControlPoint CP_EU_BASE
+ObjectTemplate.activeSafe ControlPoint CP_EU_BASE
+ObjectTemplate.modifiedByUser "BF2"
+ObjectTemplate.setNetworkableInfo ControlPointInfo
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.hasMobilePhysics 0
+ObjectTemplate.hasCollisionPhysics 1
+ObjectTemplate.physicsType Mesh
+ObjectTemplate.addTemplate flagpole
+ObjectTemplate.setControlPointName CP_EU_BASE
+ObjectTemplate.radius 20
+ObjectTemplate.team 1
+ObjectTemplate.controlPointId 1
+ObjectTemplate.timeToGetControl 15
+ObjectTemplate.timeToLoseControl 15
+ObjectTemplate.unableToChangeTeam 0
+ObjectTemplate.onlyTakeableByTeam 0
+
+Object.create CP_EU_BASE
+Object.absolutePosition -250.000/274.310/1000.000
+Object.rotation 0.000/0.000/0.000
+Object.layer 1
+
+rem Spawn Points for CP 1
+ObjectTemplate.create SpawnPoint SP_EU_BASE_1
+ObjectTemplate.activeSafe SpawnPoint SP_EU_BASE_1
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.setSpawnPositionOffset 0/1.25/0
+ObjectTemplate.setControlPointId 1
+
+Object.create SP_EU_BASE_1
+Object.absolutePosition -245.000/274.515/1008.000
+Object.rotation 0.000/0.000/0.000
+Object.layer 1
+
+ObjectTemplate.create SpawnPoint SP_EU_BASE_2
+ObjectTemplate.activeSafe SpawnPoint SP_EU_BASE_2
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.setSpawnPositionOffset 0/1.25/0
+ObjectTemplate.setControlPointId 1
+
+Object.create SP_EU_BASE_2
+Object.absolutePosition -255.000/274.225/992.000
+Object.rotation 0.000/0.000/0.000
+Object.layer 1
+
+rem -----------------------------------------------------------------
+rem Control Point 2: Golovec Central Pass (Neutral / Contested at Focal Point)
+rem -----------------------------------------------------------------
+ObjectTemplate.create ControlPoint CP_GOLOVEC_PASS
+ObjectTemplate.activeSafe ControlPoint CP_GOLOVEC_PASS
+ObjectTemplate.modifiedByUser "BF2"
+ObjectTemplate.setNetworkableInfo ControlPointInfo
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.hasMobilePhysics 0
+ObjectTemplate.hasCollisionPhysics 1
+ObjectTemplate.physicsType Mesh
+ObjectTemplate.addTemplate flagpole
+ObjectTemplate.setControlPointName CP_GOLOVEC_PASS
+ObjectTemplate.radius 25
+ObjectTemplate.team 0
+ObjectTemplate.controlPointId 2
+ObjectTemplate.timeToGetControl 15
+ObjectTemplate.timeToLoseControl 15
+ObjectTemplate.unableToChangeTeam 0
+ObjectTemplate.onlyTakeableByTeam 0
+
+Object.create CP_GOLOVEC_PASS
+Object.absolutePosition 0.000/273.380/1365.000
+Object.rotation 0.000/0.000/0.000
+Object.layer 1
+
+rem Spawn Points for CP 2
+ObjectTemplate.create SpawnPoint SP_GOLOVEC_PASS_1
+ObjectTemplate.activeSafe SpawnPoint SP_GOLOVEC_PASS_1
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.setSpawnPositionOffset 0/1.25/0
+ObjectTemplate.setControlPointId 2
+
+Object.create SP_GOLOVEC_PASS_1
+Object.absolutePosition -8.000/273.440/1358.000
+Object.rotation 45.000/0.000/0.000
+Object.layer 1
+
+ObjectTemplate.create SpawnPoint SP_GOLOVEC_PASS_2
+ObjectTemplate.activeSafe SpawnPoint SP_GOLOVEC_PASS_2
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.setSpawnPositionOffset 0/1.25/0
+ObjectTemplate.setControlPointId 2
+
+Object.create SP_GOLOVEC_PASS_2
+Object.absolutePosition 8.000/273.470/1372.000
+Object.rotation -45.000/0.000/0.000
+Object.layer 1
+
+rem -----------------------------------------------------------------
+rem Control Point 3: MEC Northern Base (Team 2)
+rem -----------------------------------------------------------------
+ObjectTemplate.create ControlPoint CP_MEC_BASE
+ObjectTemplate.activeSafe ControlPoint CP_MEC_BASE
+ObjectTemplate.modifiedByUser "BF2"
+ObjectTemplate.setNetworkableInfo ControlPointInfo
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.hasMobilePhysics 0
+ObjectTemplate.hasCollisionPhysics 1
+ObjectTemplate.physicsType Mesh
+ObjectTemplate.addTemplate flagpole
+ObjectTemplate.setControlPointName CP_MEC_BASE
+ObjectTemplate.radius 20
+ObjectTemplate.team 2
+ObjectTemplate.controlPointId 3
+ObjectTemplate.timeToGetControl 15
+ObjectTemplate.timeToLoseControl 15
+ObjectTemplate.unableToChangeTeam 0
+ObjectTemplate.onlyTakeableByTeam 0
+
+Object.create CP_MEC_BASE
+Object.absolutePosition 250.000/276.460/1700.000
+Object.rotation 180.000/0.000/0.000
+Object.layer 1
+
+rem Spawn Points for CP 3
+ObjectTemplate.create SpawnPoint SP_MEC_BASE_1
+ObjectTemplate.activeSafe SpawnPoint SP_MEC_BASE_1
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.setSpawnPositionOffset 0/1.25/0
+ObjectTemplate.setControlPointId 3
+
+Object.create SP_MEC_BASE_1
+Object.absolutePosition 245.000/276.640/1708.000
+Object.rotation 180.000/0.000/0.000
+Object.layer 1
+
+ObjectTemplate.create SpawnPoint SP_MEC_BASE_2
+ObjectTemplate.activeSafe SpawnPoint SP_MEC_BASE_2
+ObjectTemplate.isNotSaveable 1
+ObjectTemplate.setSpawnPositionOffset 0/1.25/0
+ObjectTemplate.setControlPointId 3
+
+Object.create SP_MEC_BASE_2
+Object.absolutePosition 255.000/276.365/1692.000
+Object.rotation 180.000/0.000/0.000
+Object.layer 1

@@ -1,0 +1,14 @@
+# Intermediate LiDAR / orthophoto raw download caches
+dmr_raw/
+ndmp/
+pof_1m/
+heightmap_tiles/
+colormap_tiles/
+osm_cache/
+
+# Python caches & virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/

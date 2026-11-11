@@ -1,0 +1,202 @@
+{
+  "469_100": {
+    "ti_name": "469_100",
+    "min_visina": 267.376,
+    "max_visina": 310.58,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_469_100.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_469_100.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_469_100.tif"
+  },
+  "469_99": {
+    "ti_name": "469_99",
+    "min_visina": 184.3,
+    "max_visina": 408.94,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_469_99.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_469_99.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_469_99.tif"
+  },
+  "467_99": {
+    "ti_name": "467_99",
+    "min_visina": 232.947,
+    "max_visina": 414.548,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_467_99.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_467_99.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_467_99.tif"
+  },
+  "468_98": {
+    "ti_name": "468_98",
+    "min_visina": 127.621,
+    "max_visina": 418.019,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_468_98.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_468_98.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_468_98.tif"
+  },
+  "467_98": {
+    "ti_name": "467_98",
+    "min_visina": 288.877,
+    "max_visina": 460.295,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_467_98.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_467_98.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_467_98.tif"
+  },
+  "469_98": {
+    "ti_name": "469_98",
+    "min_visina": 249.819,
+    "max_visina": 438.576,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_469_98.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_469_98.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_469_98.tif"
+  },
+  "468_99": {
+    "ti_name": "468_99",
+    "min_visina": 273.029,
+    "max_visina": 351.565,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_468_99.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_468_99.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_468_99.tif"
+  },
+  "467_100": {
+    "ti_name": "467_100",
+    "min_visina": 271.721,
+    "max_visina": 315.508,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_467_100.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_467_100.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_467_100.tif"
+  },
+  "468_100": {
+    "ti_name": "468_100",
+    "min_visina": 268.354,
+    "max_visina": 369.038,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_468_100.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_468_100.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_468_100.tif"
+  },
+  "469_97": {
+    "ti_name": "469_97",
+    "min_visina": 221.739,
+    "max_visina": 494.193,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_469_97.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_469_97.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_469_97.tif"
+  },
+  "468_97": {
+    "ti_name": "468_97",
+    "min_visina": 290.598,
+    "max_visina": 469.852,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_468_97.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_468_97.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_468_97.tif"
+  },
+  "467_97": {
+    "ti_name": "467_97",
+    "min_visina": 301.859,
+    "max_visina": 499.207,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_467_97.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_467_97.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_467_97.tif"
+  },
+  "466_100": {
+    "ti_name": "466_100",
+    "min_visina": 272.488,
+    "max_visina": 327.296,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_466_100.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_466_100.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_466_100.tif"
+  },
+  "466_98": {
+    "ti_name": "466_98",
+    "min_visina": -253.457,
+    "max_visina": 457.466,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_466_98.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_466_98.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_466_98.tif"
+  },
+  "466_99": {
+    "ti_name": "466_99",
+    "min_visina": 273.842,
+    "max_visina": 401.445,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_466_99.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_466_99.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_466_99.tif"
+  },
+  "470_99": {
+    "ti_name": "470_99",
+    "min_visina": 277.115,
+    "max_visina": 440.305,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_470_99.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_470_99.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_470_99.tif"
+  },
+  "470_98": {
+    "ti_name": "470_98",
+    "min_visina": 294.777,
+    "max_visina": 473.703,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_470_98.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_470_98.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_470_98.tif"
+  },
+  "470_100": {
+    "ti_name": "470_100",
+    "min_visina": 263.449,
+    "max_visina": 405.906,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_470_100.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_470_100.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_470_100.tif"
+  },
+  "467_101": {
+    "ti_name": "467_101",
+    "min_visina": 236.419,
+    "max_visina": 325.644,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_467_101.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_467_101.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_467_101.tif"
+  },
+  "469_101": {
+    "ti_name": "469_101",
+    "min_visina": 265.802,
+    "max_visina": 372.723,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_469_101.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_469_101.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_469_101.tif"
+  },
+  "468_101": {
+    "ti_name": "468_101",
+    "min_visina": 259.398,
+    "max_visina": 315.757,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_468_101.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_468_101.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_468_101.tif"
+  },
+  "466_97": {
+    "ti_name": "466_97",
+    "min_visina": 311.759,
+    "max_visina": 470.464,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_466_97.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_466_97.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_466_97.tif"
+  },
+  "470_97": {
+    "ti_name": "470_97",
+    "min_visina": 288.798,
+    "max_visina": 455.117,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_470_97.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_470_97.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_470_97.tif"
+  },
+  "466_101": {
+    "ti_name": "466_101",
+    "min_visina": 269.224,
+    "max_visina": 327.652,
+    "dmr_url": "https://assets.flycom.si/clss/raw/13-ljubljana-aneks/zls/dmr/DMR_466_101.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/13-ljubljana-aneks/af/pof/POF_466_101.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/13-ljubljana-aneks/zls/ndmp/nDMP_466_101.tif"
+  },
+  "470_101": {
+    "ti_name": "470_101",
+    "min_visina": 261.748,
+    "max_visina": 392.543,
+    "dmr_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/dmr/DMR_470_101.laz",
+    "pof_url": "https://assets.flycom.si/clss/raw/05-ljubljana/af/pof/POF_470_101.tif",
+    "ndmp_url": "https://assets.flycom.si/clss/raw/05-ljubljana/zls/ndmp/nDMP_470_101.tif"
+  }
+}

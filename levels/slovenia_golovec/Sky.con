@@ -1,0 +1,10 @@
+rem *** Sky and Atmospheric Environment Settings for Golovec, Slovenia ***
+Renderer.fogColor 175.00/190.00/205.00
+Renderer.fogStartEndAndBase 100.00/1200.00/1.50/0.40
+Renderer.ambientColor 0.35/0.38/0.42
+Renderer.sunColor 0.95/0.92/0.85
+Renderer.sunSpecularColor 1.00/1.00/1.00
+
+Skydome.skyTexture common/textures/sky/SkyClear07
+Skydome.cloudTexture common/textures/sky/SkyClouds01
+Skydome.drawDistance 1500

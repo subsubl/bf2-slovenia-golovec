@@ -1,0 +1,80 @@
+rem *** Overgrowth System Configuration for Temperate European Forest (Golovec) ***
+rem Coordinates: Origin (0,0,0) = D96TM [468498 E, 99466 N] / WGS84 [46.034276 N, 14.592945 E]
+rem Biome: Central European Temperate Mixed Forest (Illyrian / Dinaric Beech-Fir-Oak-Birch)
+
+Overgrowth.addMaterial temperate_forest 1
+Overgrowth.setActiveMaterial temperate_forest
+
+rem --- 1. Primary Conifer: Silver Fir / Spruce Cluster ---
+Overgrowth.addType fir
+Overgrowth.setActiveType fir
+OvergrowthType.geometry fir_mixed02
+OvergrowthType.density 4.0
+OvergrowthType.normalScale 0.05
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 0.85
+OvergrowthType.minRadiusToOthers 0.80
+
+rem --- 2. Emergent Conifer: Mature Scots Pine ---
+Overgrowth.addType pine_large
+Overgrowth.setActiveType pine_large
+OvergrowthType.geometry pine_large
+OvergrowthType.density 1.5
+OvergrowthType.normalScale 0.03
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 1.40
+OvergrowthType.minRadiusToOthers 1.00
+
+rem --- 3. Deciduous Broadleaf: Primary Silver Birch ---
+Overgrowth.addType birch_1
+Overgrowth.setActiveType birch_1
+OvergrowthType.geometry birch_green_1
+OvergrowthType.density 2.8
+OvergrowthType.normalScale 0.04
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 0.75
+OvergrowthType.minRadiusToOthers 0.70
+
+rem --- 4. Deciduous Broadleaf: Secondary Silver Birch Variant ---
+Overgrowth.addType birch_2
+Overgrowth.setActiveType birch_2
+OvergrowthType.geometry birch_green_2
+OvergrowthType.density 2.2
+OvergrowthType.normalScale 0.04
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 0.75
+OvergrowthType.minRadiusToOthers 0.70
+
+rem --- 5. Deciduous Hardwood: European Oak ---
+Overgrowth.addType oak
+Overgrowth.setActiveType oak
+OvergrowthType.geometry oak_01
+OvergrowthType.density 1.8
+OvergrowthType.normalScale 0.03
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 1.30
+OvergrowthType.minRadiusToOthers 1.00
+
+rem --- 6. Forest Snag / Standing Deadwood: Dead Pine ---
+Overgrowth.addType pine_dead
+Overgrowth.setActiveType pine_dead
+OvergrowthType.geometry pine_dead
+OvergrowthType.density 0.6
+OvergrowthType.normalScale 0.04
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 2.00
+OvergrowthType.minRadiusToOthers 0.80
+
+rem --- 7. Forest Understory & Edge Shrub: Large Bush ---
+Overgrowth.addType undergrowth_bush
+Overgrowth.setActiveType undergrowth_bush
+OvergrowthType.geometry largebush
+OvergrowthType.density 2.0
+OvergrowthType.normalScale 0.20
+OvergrowthType.rotationScale 180
+OvergrowthType.minRadiusToSame 0.80
+OvergrowthType.minRadiusToOthers 0.50
+
+rem --- Global Overgrowth Rendering Distance & LOD Thresholds ---
+Overgrowth.viewDistance 600.0
+Overgrowth.closeDistPercentage 0.25

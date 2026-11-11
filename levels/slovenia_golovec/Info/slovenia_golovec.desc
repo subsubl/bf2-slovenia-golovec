@@ -1,0 +1,12 @@
+<map>
+	<name> Slovenia Golovec (4km) </name>
+	<briefing> Golovec ridge real-world 4km x 4km battlefield in SE Ljubljana, Slovenia. Real cyclic LiDAR topography and OpenStreetMap structures. </briefing>
+	<music> common/sound/menu/music/load_MEC_music.ogg </music>
+	<modes>
+		<mode type="gpm_cq">
+			<maptype players="16" type="headon">Head-On Conquest across Golovec ridge</maptype>
+			<maptype players="32" type="headon">Head-On Conquest across Golovec ridge</maptype>
+			<maptype players="64" type="headon">Head-On Conquest across Golovec ridge</maptype>
+		</mode>
+	</modes>
+</map>

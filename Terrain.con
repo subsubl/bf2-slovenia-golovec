@@ -1,0 +1,9 @@
+rem ** Terrain.con for 4096m x 4096m Battlefield 2 Map **
+terrain.create terrain
+terrain.load Heightmap.raw
+terrain.primaryWorldScale 2/0.01/2
+terrain.setHeightmapGridSize 2 2
+terrain.setWorldSize 4096
+
+rem Ground water level (Ljubljanica river plain elevation ~270m)
+terrain.setWaterElevation 270.0

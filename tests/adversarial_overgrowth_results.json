@@ -1,0 +1,107 @@
+{
+  "verdict": "CONFIRM",
+  "con_path": "/home/ator/BF2/levels/slovenia_golovec/OvergrowthSystem.con",
+  "file_size_bytes": 2739,
+  "line_metrics": {
+    "total_lines": 80,
+    "remark_lines": 11,
+    "blank_lines": 9,
+    "executable_lines": 60,
+    "invalid_prefixes": 0,
+    "syntax_errors": 0
+  },
+  "material": {
+    "name": "temperate_forest",
+    "id": 1,
+    "declared_count": 1
+  },
+  "species_inventory": {
+    "count": 7,
+    "types": [
+      "fir",
+      "pine_large",
+      "birch_1",
+      "birch_2",
+      "oak",
+      "pine_dead",
+      "undergrowth_bush"
+    ],
+    "configurations": {
+      "fir": {
+        "geometry": "fir_mixed02",
+        "density": 4.0,
+        "normalScale": 0.05,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 0.85,
+        "minRadiusToOthers": 0.8
+      },
+      "pine_large": {
+        "geometry": "pine_large",
+        "density": 1.5,
+        "normalScale": 0.03,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 1.4,
+        "minRadiusToOthers": 1.0
+      },
+      "birch_1": {
+        "geometry": "birch_green_1",
+        "density": 2.8,
+        "normalScale": 0.04,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 0.75,
+        "minRadiusToOthers": 0.7
+      },
+      "birch_2": {
+        "geometry": "birch_green_2",
+        "density": 2.2,
+        "normalScale": 0.04,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 0.75,
+        "minRadiusToOthers": 0.7
+      },
+      "oak": {
+        "geometry": "oak_01",
+        "density": 1.8,
+        "normalScale": 0.03,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 1.3,
+        "minRadiusToOthers": 1.0
+      },
+      "pine_dead": {
+        "geometry": "pine_dead",
+        "density": 0.6,
+        "normalScale": 0.04,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 2.0,
+        "minRadiusToOthers": 0.8
+      },
+      "undergrowth_bush": {
+        "geometry": "largebush",
+        "density": 2.0,
+        "normalScale": 0.2,
+        "rotationScale": 180.0,
+        "minRadiusToSame": 0.8,
+        "minRadiusToOthers": 0.5
+      }
+    },
+    "total_density": 14.9,
+    "ecological_distribution_pct": {
+      "conifers": 40.94,
+      "broadleaves": 45.64,
+      "understory_shrub": 13.42
+    }
+  },
+  "rendering": {
+    "view_distance_m": 600.0,
+    "close_dist_percentage": 0.25,
+    "impostor_billboard_transition_m": 150.0
+  },
+  "adversarial_checks": {
+    "vanilla_mesh_compliance": true,
+    "disallowed_biome_geometries_found": 0,
+    "all_densities_positive": true,
+    "all_radii_positive": true,
+    "slash_spacing_violations": 0,
+    "oracle_mutation_test_passed": true
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "verdict": "CONFIRM",
+  "combat_area": {
+    "name": "CombatArea_Golovec",
+    "vertices": [
+      [
+        -600.0,
+        765.0
+      ],
+      [
+        600.0,
+        765.0
+      ],
+      [
+        600.0,
+        1965.0
+      ],
+      [
+        -600.0,
+        1965.0
+      ]
+    ],
+    "vertex_count": 4,
+    "signed_area_m2": 1440000.0,
+    "winding_order": "counter-clockwise",
+    "instant_desertion_bug_prevented": true,
+    "corners": [
+      {
+        "vertex": 0,
+        "x": -600.0,
+        "z": 765.0,
+        "elevation": 281.1
+      },
+      {
+        "vertex": 1,
+        "x": 600.0,
+        "z": 765.0,
+        "elevation": 271.46
+      },
+      {
+        "vertex": 2,
+        "x": 600.0,
+        "z": 1965.0,
+        "elevation": 273.45
+      },
+      {
+        "vertex": 3,
+        "x": -600.0,
+        "z": 1965.0,
+        "elevation": 278.35
+      }
+    ]
+  },
+  "focal_point_containment": {
+    "coordinates": [
+      0.0,
+      1365.0
+    ],
+    "enclosed_ray_casting": true,
+    "winding_number": 1,
+    "distance_to_boundary_m": 600.0,
+    "safe_margin_exceeds_50m": true
+  },
+  "control_points": [
+    {
+      "name": "CP_EU_BASE",
+      "position": [
+        -250.0,
+        274.31,
+        1000.0
+      ],
+      "radius": 20.0,
+      "distance_to_boundary": 235.0,
+      "margin_beyond_radius": 215.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "CP_GOLOVEC_PASS",
+      "position": [
+        0.0,
+        273.38,
+        1365.0
+      ],
+      "radius": 25.0,
+      "distance_to_boundary": 600.0,
+      "margin_beyond_radius": 575.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "CP_MEC_BASE",
+      "position": [
+        250.0,
+        276.46,
+        1700.0
+      ],
+      "radius": 20.0,
+      "distance_to_boundary": 265.0,
+      "margin_beyond_radius": 245.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    }
+  ],
+  "spawn_points": [
+    {
+      "name": "SP_EU_BASE_1",
+      "position": [
+        -245.0,
+        274.515,
+        1008.0
+      ],
+      "distance_to_boundary": 243.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "SP_EU_BASE_2",
+      "position": [
+        -255.0,
+        274.225,
+        992.0
+      ],
+      "distance_to_boundary": 227.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "SP_GOLOVEC_PASS_1",
+      "position": [
+        -8.0,
+        273.44,
+        1358.0
+      ],
+      "distance_to_boundary": 592.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "SP_GOLOVEC_PASS_2",
+      "position": [
+        8.0,
+        273.47,
+        1372.0
+      ],
+      "distance_to_boundary": 592.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "SP_MEC_BASE_1",
+      "position": [
+        245.0,
+        276.64,
+        1708.0
+      ],
+      "distance_to_boundary": 257.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    },
+    {
+      "name": "SP_MEC_BASE_2",
+      "position": [
+        255.0,
+        276.365,
+        1692.0
+      ],
+      "distance_to_boundary": 273.0,
+      "enclosed_ray_casting": true,
+      "winding_number": 1
+    }
+  ],
+  "bounds_validation": {
+    "all_vertices_in_range_2048": true,
+    "min_distance_to_world_bounds_m": 83.0
+  },
+  "adversarial_suite_tests": 20,
+  "adversarial_suite_passed": 20,
+  "adversarial_suite_failed": 0
+}

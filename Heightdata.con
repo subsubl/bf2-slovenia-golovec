@@ -1,0 +1,8 @@
+rem ** Heightdata.con generated for 4096m x 4096m Slovenia (Golovec / SE Ljubljana) Map **
+rem Coordinates: Origin (0,0,0) = D96TM [468498 E, 99466 N] / WGS84 [46.034276 N, 14.592945 E]
+rem Focal Point (+0, +1365) = D96TM [468498 E, 100831 N] / WGS84 [46.046559 N, 14.592945 E]
+
+heightmap.setGridSize 2 2
+heightmap.setSize 2049 2049
+heightmap.setScale 2/0.01/2
+heightmap.setElevationOffset 0.0
