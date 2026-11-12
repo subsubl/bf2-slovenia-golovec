@@ -27,6 +27,7 @@ LEVEL_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/slovenia_golovec
 RAW_DIR = os.path.join(LEVEL_DIR, "_raw_files")
 DV_DIR = "/media/ator/Tera/Bf2/Battlefield 2/mods/bf2/Levels/Dragon_Valley"
 SEA_WATER_LEVEL = 269.50
+ROAD_MARKINGS_4096 = None  # filled by extract_osm_and_raba_layers: 1=centre dash, 2=edge line
 
 # Exact DICE 3ds Max bounding-box center Y-pivot offsets above ground level (in meters)
 # verified across all vanilla Battlefield 2 levels:
@@ -227,6 +228,46 @@ def extract_osm_and_raba_layers():
 
         if tags.get("barrier") in ("fence", "wall") and len(pts) >= 2:
             fence_ways.append((tags.get("barrier"), pts))
+
+    # Lane markings at 4096 px (2 px/m): dashed centre lines on classified roads, solid edge lines on motorways
+    global ROAD_MARKINGS_4096
+    mk_img = Image.new("L", (4096, 4096), 0)
+    mk = ImageDraw.Draw(mk_img)
+    for wid, (tags, nds, pts) in ways.items():
+        hw = tags.get("highway", "")
+        if hw not in ("motorway", "motorway_link", "trunk", "primary", "secondary", "tertiary", "residential"):
+            continue
+        if tags.get("bridge") and False:
+            continue
+        p2 = [(x * 2.0, z * 2.0) for x, z in pts]
+        half_w = {"motorway": 7, "motorway_link": 5, "trunk": 6, "primary": 6, "secondary": 5, "tertiary": 4, "residential": 3}[hw]
+        if hw.startswith("motorway"):
+            # solid edge lines
+            for i in range(len(p2) - 1):
+                (x0, z0), (x1, z1) = p2[i], p2[i + 1]
+                L = math.hypot(x1 - x0, z1 - z0)
+                if L < 1e-6:
+                    continue
+                nx_, nz_ = -(z1 - z0) / L, (x1 - x0) / L
+                for sgn in (-1, 1):
+                    off = sgn * (half_w - 0.8)
+                    mk.line([(x0 + nx_ * off, z0 + nz_ * off), (x1 + nx_ * off, z1 + nz_ * off)], fill=2, width=1)
+        # dashed centre line: 6 px on / 8 px off (3 m / 4 m)
+        carry = 0.0
+        for i in range(len(p2) - 1):
+            (x0, z0), (x1, z1) = p2[i], p2[i + 1]
+            L = math.hypot(x1 - x0, z1 - z0)
+            if L < 1e-6:
+                continue
+            ux_, uz_ = (x1 - x0) / L, (z1 - z0) / L
+            t = -carry
+            while t < L:
+                a, b = max(t, 0.0), min(t + 6.0, L)
+                if b > a:
+                    mk.line([(x0 + ux_ * a, z0 + uz_ * a), (x0 + ux_ * b, z0 + uz_ * b)], fill=1, width=1)
+                t += 14.0
+            carry = (carry + L) % 14.0
+    ROAD_MARKINGS_4096 = np.array(mk_img, dtype=np.uint8)
 
     meadow_mask_2048 = np.array(meadow_img, dtype=bool)
     road_mask_2048 = np.array(road_img, dtype=np.uint8)
@@ -817,11 +858,16 @@ def main():
     from scipy.ndimage import gaussian_filter, binary_dilation
     pv = np.kron((road_mask_2048 == 2) & ~river_mask[:2048, :2048], np.ones((2, 2), dtype=bool))
     tk = np.kron((road_mask_2048 == 1) & ~river_mask[:2048, :2048], np.ones((2, 2), dtype=bool))
-    a_pv = np.clip(gaussian_filter(pv.astype(np.float32), 0.8) * 1.4, 0, 0.85)[:, :, None]
-    a_tk = np.clip(gaussian_filter(tk.astype(np.float32), 0.8) * 1.2, 0, 0.55)[:, :, None]
+    a_pv = np.clip(gaussian_filter(pv.astype(np.float32), 0.7) * 1.6, 0, 0.97)[:, :, None]
+    a_tk = np.clip(gaussian_filter(tk.astype(np.float32), 0.7) * 1.5, 0, 0.75)[:, :, None]
     cmf = cm_south_up.astype(np.float32)
-    cmf = cmf * (1 - a_pv) + np.array([96, 96, 100], dtype=np.float32) * a_pv
-    cmf = cmf * (1 - a_tk) + np.array([142, 124, 94], dtype=np.float32) * a_tk
+    cmf = cmf * (1 - a_tk) + np.array([168, 142, 100], dtype=np.float32) * a_tk
+    cmf = cmf * (1 - a_pv) + np.array([70, 70, 75], dtype=np.float32) * a_pv
+    mk4 = ROAD_MARKINGS_4096
+    sel_c = ((mk4 == 1) & pv)[:, :, None]
+    sel_e = ((mk4 == 2) & pv)[:, :, None]
+    cmf = np.where(sel_c, np.array([225, 215, 150], dtype=np.float32), cmf)
+    cmf = np.where(sel_e, np.array([235, 235, 235], dtype=np.float32), cmf)
     cm_south_up = np.clip(cmf, 0, 255).astype(np.uint8)
 
     os.makedirs(os.path.join(RAW_DIR, "Colormaps"), exist_ok=True)
