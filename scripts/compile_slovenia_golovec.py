@@ -216,7 +216,7 @@ def extract_osm_and_raba_layers():
 
         hw = tags.get("highway", "")
         rw = tags.get("railway", "")
-        if hw in ("motorway", "motorway_link", "primary", "secondary", "tertiary"):
+        if hw in ("motorway", "motorway_link", "trunk", "primary", "secondary", "tertiary"):
             rd_draw.line(pts, fill=2, width=7 if "motorway" in hw else 5)
             if hw in ("motorway", "secondary"):
                 motorway_ways.append((hw, pts))
@@ -813,6 +813,17 @@ def main():
     )
     cm_south_up = np.flipud(cm_full).copy()
 
+    # Paint OSM roads into the 4096px colormap (2 px per metre): asphalt grey / track brown
+    from scipy.ndimage import gaussian_filter, binary_dilation
+    pv = np.kron((road_mask_2048 == 2) & ~river_mask[:2048, :2048], np.ones((2, 2), dtype=bool))
+    tk = np.kron((road_mask_2048 == 1) & ~river_mask[:2048, :2048], np.ones((2, 2), dtype=bool))
+    a_pv = np.clip(gaussian_filter(pv.astype(np.float32), 0.8) * 1.4, 0, 0.85)[:, :, None]
+    a_tk = np.clip(gaussian_filter(tk.astype(np.float32), 0.8) * 1.2, 0, 0.55)[:, :, None]
+    cmf = cm_south_up.astype(np.float32)
+    cmf = cmf * (1 - a_pv) + np.array([96, 96, 100], dtype=np.float32) * a_pv
+    cmf = cmf * (1 - a_tk) + np.array([142, 124, 94], dtype=np.float32) * a_tk
+    cm_south_up = np.clip(cmf, 0, 255).astype(np.uint8)
+
     os.makedirs(os.path.join(RAW_DIR, "Colormaps"), exist_ok=True)
     os.makedirs(os.path.join(RAW_DIR, "Lightmaps"), exist_ok=True)
     os.makedirs(os.path.join(RAW_DIR, "Detailmaps"), exist_ok=True)
@@ -832,13 +843,17 @@ def main():
     w_rock = np.clip((0.92 - ny_2048) / 0.14, 0.0, 1.0)
     # Dirt/road/riverbank weight on OSM roads & riverbanks/bed
     w_dirt = np.zeros((2048, 2048), dtype=np.float32)
-    w_dirt[road_mask_2048 == 1] = 0.78
-    w_dirt[road_mask_2048 == 2] = 0.95
+    paved_2048 = (road_mask_2048 == 2) & ~river_mask[:2048, :2048]
+    track_2048 = (road_mask_2048 == 1) & ~river_mask[:2048, :2048]
+    w_dirt[track_2048] = 0.78
     w_dirt[dist_out_2048 <= 3.0] = np.maximum(w_dirt[dist_out_2048 <= 3.0], 0.85)
     w_dirt[hp_2048 <= SEA_WATER_LEVEL] = 0.95
     # RABA meadows & farmland boost grass weight unless road/river
     w_rock[meadow_mask_2048] *= 0.25
 
+    # Paved OSM roads: force the grey rock detail layer so they read as asphalt
+    w_rock[paved_2048] = 1.0
+    w_dirt[paved_2048] = 0.0
     rem = np.clip(1.0 - w_dirt, 0.0, 1.0)
     b_ch = np.clip(np.round(rem * w_rock * 255.0), 0, 255).astype(np.uint8)
     r_ch = np.clip(np.round(w_dirt * 255.0), 0, 255).astype(np.uint8)
